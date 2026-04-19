@@ -86,6 +86,24 @@ def build_llm_string(provider: str = None, model_override: str = None) -> str:
     return config["model"]
 
 
+def create_llm_instance(provider: str = None, api_key: str = None, base_url_override: str = None):
+    """Tạo LLM instance chung cho tất cả agent."""
+    from crewai import LLM
+    llm_config = get_llm_config(provider)
+
+    llm_kwargs = {"model": llm_config["model"]}
+    if api_key:
+        llm_kwargs["api_key"] = api_key
+    elif "api_key" in llm_config and llm_config["api_key"]:
+        llm_kwargs["api_key"] = llm_config["api_key"]
+    if base_url_override:
+        llm_kwargs["base_url"] = base_url_override
+    elif "base_url" in llm_config:
+        llm_kwargs["base_url"] = llm_config["base_url"]
+
+    return LLM(**llm_kwargs)
+
+
 # ============================================
 # Slide Themes
 # ============================================

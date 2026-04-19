@@ -2,23 +2,13 @@
 Slide Designer Agent - Tạo file PowerPoint từ outline đã approve.
 """
 
-from crewai import Agent, LLM
-from config import get_llm_config
+from crewai import Agent
+from config import create_llm_instance
 
 
 def create_slide_designer(provider: str = None, api_key: str = None) -> Agent:
     """Tạo Slide Designer Agent."""
-    llm_config = get_llm_config(provider)
-
-    llm_kwargs = {"model": llm_config["model"]}
-    if api_key:
-        llm_kwargs["api_key"] = api_key
-    elif "api_key" in llm_config and llm_config["api_key"]:
-        llm_kwargs["api_key"] = llm_config["api_key"]
-    if "base_url" in llm_config:
-        llm_kwargs["base_url"] = llm_config["base_url"]
-
-    llm = LLM(**llm_kwargs)
+    llm = create_llm_instance(provider=provider, api_key=api_key)
 
     return Agent(
         role="Chuyên gia Thiết kế Slide PowerPoint",

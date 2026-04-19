@@ -91,7 +91,8 @@ CrewAI/
 │   ├── doc_writer.py
 │   ├── researcher.py
 │   ├── reviewer.py
-│   └── slide_designer.py
+│   ├── slide_designer.py
+│   └── speaker_doc_writer.py
 ├── tasks/
 │   ├── __init__.py
 │   ├── content_task.py
@@ -142,14 +143,14 @@ Quản lý:
 
 ### 4. `agents/`
 
-Khai báo các agent:
-- `Researcher`
-- `Content Strategist`
-- `Doc Writer`
-- `Slide Designer`
-- `Outline Reviewer`
-- `Doc Reviewer`
-- `Slide Reviewer`
+Khai báo các agent (tất cả dùng chung `create_llm_instance()` helper từ `config.py`):
+- `Researcher` — nghiên cứu nội dung
+- `Content Strategist` — tạo và sửa outline
+- `Speaker Doc Writer` — viết speaker doc chi tiết (agent chính Phase 2)
+- `Slide Designer` — tạo slide JSON
+- `Outline Reviewer` — đánh giá outline
+- `Doc Reviewer` — đánh giá speaker doc
+- `Slide Reviewer` — đánh giá slide JSON
 
 ### 5. `tasks/`
 
@@ -241,12 +242,7 @@ OPENAI_MODEL_NAME=gpt-4o
 | Groq | `GROQ_API_KEY` | `GROQ_MODEL_NAME` | dễ chạm rate limit TPM |
 | Z AI | `ZAI_API_KEY` | `ZAI_MODEL_NAME` | cần `ZAI_BASE_URL` |
 
-Lưu ý: `config.py` có hỗ trợ `groq`, nhưng mẫu `.env.example` hiện chưa có block Groq. Nếu dùng Groq, hãy tự thêm:
-
-```env
-GROQ_API_KEY=your-groq-key
-GROQ_MODEL_NAME=groq/llama-3.3-70b-versatile
-```
+Tất cả provider đã có sẵn trong `.env.example`. Chỉ cần uncomment và điền API key tương ứng.
 
 ## Chạy project
 
@@ -299,7 +295,7 @@ Khuyến nghị:
 - Chưa có persistence cho session workflow ngoài Streamlit session state
 - Chưa có test suite tự động
 - CLI hiện chưa expose `human review mode`
-- Mẫu `.env.example` chưa đồng bộ đầy đủ với tất cả provider trong `config.py`
+- Một số agent file backup (`doc_writer.py`) chưa được dọn dẹp hoàn toàn
 
 ## Hướng phát triển đề xuất
 

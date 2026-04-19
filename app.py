@@ -1,48 +1,89 @@
 """
-Streamlit Web UI - Giao diện tương tác với hệ thống tạo Slide AI.
-Workflow: Input → Auto Pipeline (Research → Outline → Doc → Slide → PPTX) → Done
-Human chỉ tương tác với sản phẩm cuối (Doc + Slide + PPTX).
-Chạy: streamlit run app.py
+Streamlit Web UI - Giao dien tao slide AI.
+Workflow: Input -> Outline -> Research -> Speaker Doc -> Slide -> PPTX
 """
 
 import os
 import sys
-import json
 
 import streamlit as st
 
-# Thêm project root vào path
+# Them project root vao path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from config import THEMES, suggest_theme, get_llm_config, LLM_PROVIDERS
 from crew import (
-    run_full_pipeline,
     run_phase1,
     run_phase2_doc,
     run_phase3,
     revise_outline_with_human_feedback,
+    use_user_outline,
     _save_final_assets,
-    format_outline_display,
 )
 
 
-# ============================================
-# Page Config
-# ============================================
 st.set_page_config(
-    page_title="🎨 Tạo Slide AI",
-    page_icon="🎨",
+    page_title="Tao Slide AI",
+    page_icon="🎯",
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-# ============================================
-# Session State Init
-# ============================================
+
+def inject_styles():
+    """CSS nhe de giao dien ro rang hon."""
+    st.markdown(
+        """
+        <style>
+        .block-container {
+            padding-top: 1.5rem;
+            padding-bottom: 2rem;
+        }
+        .app-hero {
+            padding: 1.25rem 1.5rem;
+            border: 1px solid rgba(49, 51, 63, 0.15);
+            border-radius: 18px;
+            background: linear-gradient(135deg, rgba(14, 116, 144, 0.08), rgba(245, 158, 11, 0.08));
+            margin-bottom: 1rem;
+        }
+        .app-hero h1 {
+            margin: 0 0 0.4rem 0;
+            font-size: 2rem;
+        }
+        .app-hero p {
+            margin: 0;
+            color: #475569;
+        }
+        .metric-card {
+            border: 1px solid rgba(49, 51, 63, 0.12);
+            border-radius: 16px;
+            padding: 0.85rem 1rem;
+            background: rgba(255,255,255,0.7);
+        }
+        .section-card {
+            border: 1px solid rgba(49, 51, 63, 0.12);
+            border-radius: 18px;
+            padding: 1rem 1rem 0.75rem 1rem;
+            background: rgba(255,255,255,0.72);
+            margin-bottom: 1rem;
+        }
+        .muted {
+            color: #64748b;
+            font-size: 0.95rem;
+        }
+        .small-gap {
+            margin-top: 0.5rem;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
 def init_session_state():
-    """Khởi tạo session state variables."""
+    """Khoi tao session state."""
     defaults = {
-        "phase": "input",  # input -> processing -> done -> error
+        "phase": "input",
         "topic": "",
         "theme_name": "corporate",
         "num_slides": 10,
@@ -62,38 +103,77 @@ def init_session_state():
         "human_outline_feedback": "",
         "review_logs": [],
         "errors": [],
+        "user_outline": "",
+        "zai_base_url": "",
     }
     for key, value in defaults.items():
         if key not in st.session_state:
             st.session_state[key] = value
 
-init_session_state()
+
+def reset_app():
+    """Reset toan bo state."""
+    for key in list(st.session_state.keys()):
+        del st.session_state[key]
+    st.rerun()
 
 
-# ============================================
-# Sidebar - Cấu hình
-# ============================================
+def render_hero(title: str, subtitle: str):
+    st.markdown(
+        f"""
+        <div class="app-hero">
+            <h1>{title}</h1>
+            <p>{subtitle}</p>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_metric_cards(items):
+    cols = st.columns(len(items))
+    for col, (label, value) in zip(cols, items):
+        with col:
+            st.markdown(
+                f"""
+                <div class="metric-card">
+                    <div class="muted">{label}</div>
+                    <div><strong>{value}</strong></div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+
+def phase_label(phase: str) -> str:
+    mapping = {
+        "input": "Nhap yeu cau",
+        "processing": "Dang xu ly",
+        "review_outline": "Duyet outline",
+        "done": "Hoan thanh",
+        "error": "Co loi",
+    }
+    return mapping.get(phase, phase)
+
+
 def render_sidebar():
-    """Render sidebar với cấu hình LLM và theme."""
+    """Sidebar cau hinh."""
     with st.sidebar:
-        st.title("⚙️ Cấu hình")
+        st.title("Dieu khien")
+        st.caption("Chinh cau hinh truoc khi chay pipeline.")
 
-        # --- LLM Provider ---
-        st.subheader("🤖 LLM Provider")
+        st.subheader("LLM")
         provider = st.selectbox(
-            "Chọn Provider",
+            "Provider",
             options=list(LLM_PROVIDERS.keys()),
             index=list(LLM_PROVIDERS.keys()).index(st.session_state.provider),
             key="provider_select",
-            help="Chọn nhà cung cấp LLM",
         )
         st.session_state.provider = provider
 
-        # Hiển thị model tương ứng
         llm_config = get_llm_config(provider)
-        st.info(f"📌 Model: `{llm_config['model']}`")
+        st.info(f"Model dang dung: `{llm_config['model']}`")
 
-        # API Key input
         api_key_label = f"API Key ({provider.upper()})"
         if provider == "ollama":
             api_key = st.text_input(
@@ -112,11 +192,14 @@ def render_sidebar():
             )
             base_url_env = LLM_PROVIDERS[provider].get("base_url_env", "")
             default_base_url = os.getenv(base_url_env, LLM_PROVIDERS[provider].get("default_base_url", ""))
-            st.text_input(
+            zai_base_url = st.text_input(
                 "Base URL (Z AI)",
                 value=st.session_state.get("zai_base_url", "") or default_base_url,
                 key="zai_base_url_input",
             )
+            if zai_base_url:
+                os.environ[base_url_env] = zai_base_url
+                st.session_state.zai_base_url = zai_base_url
         else:
             env_key = LLM_PROVIDERS[provider].get("api_key_env", "")
             default_key = os.getenv(env_key, "")
@@ -130,260 +213,340 @@ def render_sidebar():
 
         st.divider()
 
-        st.subheader("🧭 Review Mode")
+        st.subheader("Review")
         review_mode = st.radio(
-            "Chọn chế độ review",
+            "Che do",
             options=["agent", "human"],
-            format_func=lambda v: "Agent review tự động" if v == "agent" else "Human review trước Phase 2",
+            format_func=lambda v: "Agent review tu dong" if v == "agent" else "Human duyet outline truoc",
             index=0 if st.session_state.review_mode == "agent" else 1,
-            help="Human review mode sẽ dừng sau outline để bạn duyệt trước khi tạo tài liệu và slide.",
+            help="Human mode se dung lai sau buoc outline de ban xem va chinh sua truoc khi research.",
         )
         st.session_state.review_mode = review_mode
 
         st.divider()
 
-        # --- Slide Style ---
-        st.subheader("🎨 Slide Style")
+        st.subheader("Theme")
         suggested = suggest_theme(st.session_state.topic) if st.session_state.topic else "corporate"
-
         theme_options = list(THEMES.keys())
         theme_labels = [f"{THEMES[t]['name']} - {THEMES[t]['description']}" for t in theme_options]
-
-        suggested_idx = theme_options.index(suggested) if suggested in theme_options else 0
-
+        current_theme = st.session_state.theme_name if st.session_state.phase != "input" else suggested
         selected_idx = st.selectbox(
-            "Chọn Theme",
+            "Chon style slide",
             options=range(len(theme_options)),
             format_func=lambda i: theme_labels[i],
-            index=suggested_idx if st.session_state.phase == "input" else theme_options.index(st.session_state.theme_name),
+            index=theme_options.index(current_theme if current_theme in theme_options else "corporate"),
             key="theme_select",
         )
         st.session_state.theme_name = theme_options[selected_idx]
 
-        # Preview theme colors
         theme = THEMES[st.session_state.theme_name]
         cols = st.columns(4)
-        color_labels = ["Background", "Title", "Text", "Accent"]
+        color_labels = ["BG", "Title", "Text", "Accent"]
         color_keys = ["bg_color", "title_color", "text_color", "accent_color"]
-        for i, (label, key) in enumerate(zip(color_labels, color_keys)):
-            with cols[i]:
-                hex_color = theme[key]
-                st.color_picker(label, f"#{hex_color}", disabled=True, key=f"color_{key}")
+        for col, label, key in zip(cols, color_labels, color_keys):
+            with col:
+                st.color_picker(label, f"#{theme[key]}", disabled=True, key=f"color_{key}")
 
         st.divider()
 
-        # --- Số lượng slide ---
-        st.subheader("📊 Số lượng Slide")
-        num_slides = st.slider(
-            "Số slide",
+        st.subheader("So luong slide")
+        st.session_state.num_slides = st.slider(
+            "Target slides",
             min_value=5,
             max_value=20,
             value=st.session_state.num_slides,
             key="num_slides_slider",
         )
-        st.session_state.num_slides = num_slides
 
         st.divider()
 
-        # --- Workflow Progress ---
-        st.subheader("📊 Tiến trình")
-        phase = st.session_state.phase
-        if phase == "input":
-            st.info("💡 Nhập chủ đề và nhấn **Bắt đầu tạo**")
-        elif phase == "processing":
-            st.warning("⏳ Đang xử lý tự động...")
-        elif phase == "review_outline":
-            st.info("👀 Đang chờ bạn duyệt outline")
-        elif phase == "done":
-            st.success("✅ Hoàn thành!")
-        elif phase == "error":
-            st.error("❌ Có lỗi xảy ra")
+        st.subheader("Trang thai")
+        st.caption(f"Pha hien tai: {phase_label(st.session_state.phase)}")
+        if st.session_state.phase == "input":
+            st.success("San sang nhan de bai.")
+        elif st.session_state.phase == "processing":
+            st.warning("Pipeline dang chay.")
+        elif st.session_state.phase == "review_outline":
+            st.info("Dang cho ban duyet outline.")
+        elif st.session_state.phase == "done":
+            st.success("Da tao xong bo san pham.")
+        elif st.session_state.phase == "error":
+            st.error("Can xu ly loi.")
 
         st.divider()
+        if st.button("Bat dau lai", use_container_width=True):
+            reset_app()
 
-        # --- Reset ---
-        if st.button("🔄 Bắt đầu lại", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
-
-
-# ============================================
-# Main Content - Các Phase
-# ============================================
 
 def render_input_phase():
-    """Phase: Nhập topic và bắt đầu."""
-    st.title("🎨 Tạo Slide Thuyết trình bằng AI")
-    st.markdown("---")
-
-    st.markdown("### 📝 Nhập chủ đề thuyết trình")
-    st.markdown("Mô tả chủ đề bạn muốn tạo slide. Hệ thống sẽ **tự động** nghiên cứu, tạo outline, viết tài liệu, review chất lượng và tạo file PowerPoint.")
-
-    topic = st.text_area(
-        "Chủ đề thuyết trình",
-        placeholder="Ví dụ: Giới thiệu về Machine Learning và ứng dụng trong kinh doanh\n\nHoặc chi tiết hơn: Bài thuyết trình về chuyển đổi số cho doanh nghiệp SME, bao gồm các bước triển khai, công cụ cần thiết và case study thực tế",
-        height=150,
-        key="topic_input",
+    """Trang nhap yeu cau."""
+    render_hero(
+        "Tao Slide Thuyet Trinh Bang AI",
+        "Workflow moi: tao outline truoc, sau do research, viet speaker doc co nguon ro rang, roi moi tao slide va PowerPoint.",
     )
 
-    col1, col2 = st.columns([1, 5])
-    with col1:
-        if st.button("🚀 Bắt đầu tạo", type="primary", use_container_width=True, disabled=not topic.strip()):
-            if topic.strip():
-                st.session_state.topic = topic.strip()
-                st.session_state.phase = "processing"
-                st.rerun()
+    render_metric_cards(
+        [
+            ("Workflow", "Outline -> Research -> Speaker Doc"),
+            ("Review mode", "Agent" if st.session_state.review_mode == "agent" else "Human"),
+            ("Theme", THEMES[st.session_state.theme_name]["name"]),
+        ]
+    )
 
-    # Hiển thị hướng dẫn
-    with st.expander("💡 Hướng dẫn sử dụng"):
-        st.markdown("""
-        ### Workflow tự động:
-        1. **Nhập chủ đề** - Mô tả chủ đề slide bạn muốn tạo
-        2. **Cấu hình** (sidebar) - Chọn LLM provider, API key, theme
-        3. **Tự động xử lý** - Hệ thống sẽ tự động:
-           - 🔍 Nghiên cứu chủ đề
-           - 📋 Tạo & review outline (Agent tự review, tự sửa nếu cần)
-           - 📝 Viết & review tài liệu chi tiết (Agent tự review, tự sửa nếu cần)
-           - 🎨 Tạo & review slide JSON (Agent tự review, tự sửa nếu cần)
-           - 📊 Generate file PowerPoint
-        4. **Nhận sản phẩm** - Xem tài liệu, slide JSON và tải PowerPoint
+    left, right = st.columns([1.35, 1], gap="large")
 
-        **Mẹo:** Chủ đề càng chi tiết, slide càng chính xác!
-        
-        **Lưu ý:** Toàn bộ quá trình review được thực hiện bởi AI Agent.
-        Bạn chỉ làm việc với bộ sản phẩm cuối cùng: tài liệu, slide JSON và file trình chiếu.
-        """)
+    with left:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("1. Chu de bai thuyet trinh")
+        st.caption("Nhap mot chu de ro rang. He thong se suy ra theme va tao outline phu hop.")
+        topic = st.text_input(
+            "Chu de",
+            value=st.session_state.topic,
+            placeholder="Vi du: Chuyen doi so cho doanh nghiep vua va nho",
+            key="topic_input",
+        )
+        st.session_state.topic = topic
+
+        st.markdown('<div class="small-gap"></div>', unsafe_allow_html=True)
+        st.subheader("2. Outline co san (tuy chon)")
+        st.caption("Ban co the bo qua de AI tao outline, hoac dan outline san o dang JSON hay text/markdown.")
+        user_outline = st.text_area(
+            "Outline dau vao",
+            value=st.session_state.user_outline,
+            height=250,
+            placeholder="""Vi du JSON:
+{
+  "presentation_title": "Tieu de bai thuyet trinh",
+  "slides": [
+    {"type": "title", "title": "Tieu de chinh", "subtitle": "Phu de"},
+    {"type": "content", "title": "Hien trang", "bullet_points": ["Diem 1", "Diem 2"]},
+    {"type": "summary", "title": "Tom tat", "bullet_points": ["Y chinh"]}
+  ]
+}
+
+Hoac dang text:
+# Tieu de bai thuyet trinh
+## Mo dau
+- Y chinh 1
+- Y chinh 2
+## Hien trang
+- Y chinh 1
+- Y chinh 2
+## Ket luan
+- Tom tat""",
+            key="user_outline_input",
+        )
+        st.session_state.user_outline = user_outline
+
+        if st.button("Bat dau tao", type="primary", use_container_width=True, disabled=not topic.strip()):
+            st.session_state.phase = "processing"
+            st.rerun()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Tom tat workflow")
+        if st.session_state.user_outline.strip():
+            st.success("Outline san duoc uu tien. He thong se chuan hoa outline truoc khi research.")
+            workflow_items = [
+                "Validate/chuan hoa outline dau vao",
+                "Research chi tiet theo tung slide",
+                "Writer agent viet speaker doc co nguon",
+                "Tao slide + review",
+                "Xuat PowerPoint",
+            ]
+        else:
+            st.info("Khong co outline san. Agent se tao outline truoc.")
+            workflow_items = [
+                "Tao outline tu chu de",
+                "Review outline",
+                "Research chi tiet theo outline da duyet",
+                "Writer agent viet speaker doc co nguon",
+                "Tao slide + review + xuat PowerPoint",
+            ]
+        for idx, item in enumerate(workflow_items, start=1):
+            st.markdown(f"**{idx}.** {item}")
+
+        st.markdown("---")
+        st.subheader("Cach dung tot nhat")
+        st.markdown(
+            """
+            - Dung `human review` neu ban muon duyet outline truoc khi di xa hon.
+            - Outline san nen ngan gon, tap trung vao ten slide va y chinh.
+            - Speaker doc se chi tiet va co nguon, phu hop cho nguoi thuyet trinh.
+            """
+        )
+        st.markdown("</div>", unsafe_allow_html=True)
 
 
 def render_processing_phase():
-    """Phase: Đang xử lý tự động toàn bộ pipeline."""
-    st.title("⏳ Đang xử lý tự động...")
-    st.markdown(f"**Chủ đề:** {st.session_state.topic}")
-    st.markdown(f"**Theme:** {THEMES[st.session_state.theme_name]['name']}")
-    st.markdown("---")
+    """Trang xu ly."""
+    render_hero(
+        "Pipeline Dang Chay",
+        f"Chu de: {st.session_state.topic} | Theme: {THEMES[st.session_state.theme_name]['name']}",
+    )
 
-    # Progress steps
-    steps = [
-        "🔍 Đang nghiên cứu chủ đề...",
-        "📋 Đang tạo & review outline...",
-        "📝 Đang viết & review tài liệu chi tiết...",
-        "🎨 Đang tạo & review slide...",
-        "📊 Đang generate file PowerPoint...",
-    ]
-
-    progress_bar = st.progress(0, text=steps[0])
-
-    with st.spinner("🤖 Các Agent đang làm việc tự động... Quá trình này có thể mất 5-15 phút tùy thuộc vào chủ đề."):
-        if st.session_state.review_mode == "human":
-            result = run_phase1(
-                topic=st.session_state.topic,
-                num_slides=st.session_state.num_slides,
-                provider=st.session_state.provider,
-                api_key=st.session_state.api_key if st.session_state.api_key else None,
-                auto_review=False,
-            )
-        else:
-            result = run_full_pipeline(
-                topic=st.session_state.topic,
-                theme_name=st.session_state.theme_name,
-                num_slides=st.session_state.num_slides,
-                provider=st.session_state.provider,
-                api_key=st.session_state.api_key if st.session_state.api_key else None,
-                auto_review=True,
-            )
-
-    progress_bar.progress(100, text="✅ Hoàn thành!")
-
-    # Lưu kết quả vào session state
-    st.session_state.review_logs = result.get("review_logs", [])
-    st.session_state.errors = result.get("errors", [])
+    progress = st.progress(0, text="Dang khoi tao...")
+    user_outline = st.session_state.user_outline.strip()
+    auto_review = st.session_state.review_mode == "agent"
 
     if st.session_state.review_mode == "human":
-        if result["error"] is None:
-            st.session_state.research_result = result.get("research_result")
-            st.session_state.outline_json = result.get("outline_json")
-            st.session_state.outline_display = result.get("outline_display")
+        if user_outline:
+            progress.progress(30, text="Dang validate outline san...")
+            result = use_user_outline(user_outline)
+            if result["error"]:
+                st.session_state.errors = [result["error"]]
+                st.session_state.failed_phase = "outline"
+                st.session_state.phase = "error"
+                st.rerun()
+            st.session_state.outline_json = result["outline_json"]
+            st.session_state.outline_display = result["outline_display"]
+            st.session_state.review_logs = result.get("review_logs", [])
             st.session_state.phase = "review_outline"
-        else:
-            st.session_state.failed_phase = "research"
-            st.session_state.phase = "error"
-    elif result["phase"] == "done":
-        st.session_state.outline_display = result.get("outline_display")
-        st.session_state.outline_json = result.get("outline_json")
-        st.session_state.doc_content = result.get("doc_content")
-        st.session_state.review_result = result.get("review_result")
-        st.session_state.slide_json = result.get("slide_json")
-        st.session_state.filepath = result.get("filepath")
-        st.session_state.doc_filepath = result.get("doc_filepath")
-        st.session_state.slide_filepath = result.get("slide_filepath")
-        st.session_state.phase = "done"
-    else:
-        # Có lỗi ở một phase nào đó
-        st.session_state.outline_display = result.get("outline_display")
-        st.session_state.doc_content = result.get("doc_content")
-        st.session_state.failed_phase = result["phase"]
-        st.session_state.phase = "error"
+            st.rerun()
 
+        progress.progress(20, text="Dang tao outline...")
+        phase1 = run_phase1(
+            topic=st.session_state.topic,
+            provider=st.session_state.provider,
+            api_key=st.session_state.api_key if st.session_state.api_key else None,
+            num_slides=st.session_state.num_slides,
+            auto_review=False,
+        )
+        st.session_state.review_logs = phase1.get("review_logs", [])
+
+        if phase1["error"]:
+            st.session_state.errors = [phase1["error"]]
+            st.session_state.failed_phase = "outline"
+            st.session_state.phase = "error"
+            st.rerun()
+
+        st.session_state.outline_json = phase1["outline_json"]
+        st.session_state.outline_display = phase1["outline_display"]
+        st.session_state.phase = "review_outline"
+        st.rerun()
+
+    progress.progress(10, text="Dang khoi tao pipeline...")
+
+    if user_outline:
+        progress.progress(20, text="Dang validate outline san...")
+        phase1 = use_user_outline(user_outline)
+    else:
+        progress.progress(20, text="Dang tao outline...")
+        phase1 = run_phase1(
+            topic=st.session_state.topic,
+            provider=st.session_state.provider,
+            api_key=st.session_state.api_key if st.session_state.api_key else None,
+            num_slides=st.session_state.num_slides,
+            auto_review=auto_review,
+        )
+
+    st.session_state.review_logs = phase1.get("review_logs", [])
+
+    if phase1["error"]:
+        st.session_state.errors = [phase1["error"]]
+        st.session_state.failed_phase = "outline"
+        st.session_state.phase = "error"
+        st.rerun()
+
+    st.session_state.outline_json = phase1["outline_json"]
+    st.session_state.outline_display = phase1["outline_display"]
+
+    progress.progress(45, text="Dang research va viet speaker doc...")
+    phase2 = run_phase2_doc(
+        approved_outline=phase1["outline_json"],
+        topic=st.session_state.topic,
+        provider=st.session_state.provider,
+        api_key=st.session_state.api_key if st.session_state.api_key else None,
+        auto_review=auto_review,
+    )
+    st.session_state.review_logs.extend(phase2.get("review_logs", []))
+
+    if phase2["error"]:
+        st.session_state.errors = [phase2["error"]]
+        st.session_state.failed_phase = "doc"
+        st.session_state.phase = "error"
+        st.rerun()
+
+    progress.progress(75, text="Dang tao slide va PowerPoint...")
+    phase3 = run_phase3(
+        approved_outline=phase1["outline_json"],
+        approved_doc=phase2["doc_content"],
+        theme_name=st.session_state.theme_name,
+        provider=st.session_state.provider,
+        api_key=st.session_state.api_key if st.session_state.api_key else None,
+        auto_review=auto_review,
+    )
+    st.session_state.review_logs.extend(phase3.get("review_logs", []))
+
+    if phase3["error"]:
+        st.session_state.doc_content = phase2["doc_content"]
+        st.session_state.errors = [phase3["error"]]
+        st.session_state.failed_phase = "slide"
+        st.session_state.phase = "error"
+        st.rerun()
+
+    progress.progress(90, text="Dang luu san pham...")
+    asset_paths = _save_final_assets(
+        topic=st.session_state.topic,
+        doc_content=phase2["doc_content"],
+        slide_json=phase3["slide_json"],
+        pptx_filepath=phase3["filepath"],
+    )
+
+    st.session_state.doc_content = phase2["doc_content"]
+    st.session_state.slide_json = phase3["slide_json"]
+    st.session_state.review_result = phase3["review_result"]
+    st.session_state.filepath = phase3["filepath"]
+    st.session_state.doc_filepath = asset_paths["doc_filepath"]
+    st.session_state.slide_filepath = asset_paths["slide_filepath"]
+    st.session_state.phase = "done"
+
+    progress.progress(100, text="Hoan thanh!")
     st.rerun()
 
 
 def render_review_outline_phase():
-    """Phase: Human review outline trước khi tạo doc và slide."""
-    st.title("👀 Duyệt Outline Trước Phase 2")
-    st.markdown(f"**Chủ đề:** {st.session_state.topic}")
-    st.markdown("Chế độ này giúp giảm số lần gọi model ở Phase 2 và Phase 3 bằng cách để bạn duyệt outline trước.")
-    st.markdown("---")
-
-    if st.session_state.get("outline_display"):
-        st.subheader("📋 Outline hiện tại")
-        st.text(st.session_state.outline_display)
-    else:
-        st.warning("⚠️ Không có outline để duyệt")
-
-    with st.expander("🔧 Xem outline JSON", expanded=False):
-        st.code(st.session_state.get("outline_json", "{}"), language="json")
-
-    st.markdown("---")
-    st.subheader("💬 Góp ý cho outline")
-    feedback = st.text_area(
-        "Nhập góp ý để agent sửa outline",
-        value=st.session_state.get("human_outline_feedback", ""),
-        placeholder="Ví dụ: thêm 1 slide về rủi ro triển khai, rút gọn phần mở đầu, đổi thứ tự case study lên trước phần kết luận...",
-        height=140,
-        key="human_outline_feedback_input",
+    """Trang duyet outline."""
+    render_hero(
+        "Duyet Outline",
+        "Ban co the chap nhan outline hien tai, chinh sua bang feedback, hoac quay lai de doi de bai.",
     )
-    st.session_state.human_outline_feedback = feedback
 
-    col1, col2, col3 = st.columns(3)
+    render_metric_cards(
+        [
+            ("Chu de", st.session_state.topic or "-"),
+            ("Theme", THEMES[st.session_state.theme_name]["name"]),
+            ("Review mode", "Human"),
+        ]
+    )
 
-    with col1:
-        if st.button("🛠️ Sửa outline theo góp ý", use_container_width=True, disabled=not feedback.strip()):
-            with st.spinner("🤖 Đang cập nhật outline theo góp ý của bạn..."):
-                revised = revise_outline_with_human_feedback(
-                    current_outline=st.session_state.outline_json,
-                    topic=st.session_state.topic,
-                    feedback=feedback.strip(),
-                    provider=st.session_state.provider,
-                    api_key=st.session_state.api_key if st.session_state.api_key else None,
-                )
+    left, right = st.columns([1.2, 1], gap="large")
 
-                st.session_state.review_logs.extend(revised.get("review_logs", []))
+    with left:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Outline da tao")
+        if st.session_state.outline_display:
+            st.text(st.session_state.outline_display)
+        else:
+            st.info("Chua co outline.")
+        st.markdown("</div>", unsafe_allow_html=True)
 
-                if revised["error"]:
-                    st.session_state.errors = [revised["error"]]
-                    st.session_state.failed_phase = "research"
-                    st.session_state.phase = "error"
-                    st.rerun()
+    with right:
+        st.markdown('<div class="section-card">', unsafe_allow_html=True)
+        st.subheader("Feedback cho outline")
+        feedback = st.text_area(
+            "Nhap gop y neu muon sua",
+            value=st.session_state.human_outline_feedback,
+            height=220,
+            placeholder="Vi du: Them slide ve xu huong tuong lai, rut gon phan mo dau, tach phan case study thanh 2 slide...",
+            key="outline_feedback_input",
+        )
+        st.session_state.human_outline_feedback = feedback
 
-                st.session_state.outline_json = revised["outline_json"]
-                st.session_state.outline_display = revised["outline_display"]
-                st.session_state.human_outline_feedback = ""
-                st.rerun()
-
-    with col2:
-        if st.button("✅ Duyệt outline và tạo sản phẩm cuối", type="primary", use_container_width=True):
-            with st.spinner("🤖 Đang tạo tài liệu, slide và PowerPoint từ outline đã duyệt..."):
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("Chap nhan & tiep tuc", type="primary", use_container_width=True):
                 phase2 = run_phase2_doc(
                     approved_outline=st.session_state.outline_json,
                     topic=st.session_state.topic,
@@ -391,7 +554,6 @@ def render_review_outline_phase():
                     api_key=st.session_state.api_key if st.session_state.api_key else None,
                     auto_review=False,
                 )
-
                 st.session_state.review_logs.extend(phase2.get("review_logs", []))
 
                 if phase2["error"]:
@@ -408,7 +570,6 @@ def render_review_outline_phase():
                     api_key=st.session_state.api_key if st.session_state.api_key else None,
                     auto_review=False,
                 )
-
                 st.session_state.review_logs.extend(phase3.get("review_logs", []))
 
                 if phase3["error"]:
@@ -418,45 +579,87 @@ def render_review_outline_phase():
                     st.session_state.phase = "error"
                     st.rerun()
 
-                result = {
-                    "phase": "done",
-                    "outline_display": st.session_state.outline_display,
-                    "outline_json": st.session_state.outline_json,
-                    "doc_content": phase2["doc_content"],
-                    "slide_json": phase3["slide_json"],
-                    "review_result": phase3["review_result"],
-                    "filepath": phase3["filepath"],
-                }
-
                 asset_paths = _save_final_assets(
                     topic=st.session_state.topic,
                     doc_content=phase2["doc_content"],
                     slide_json=phase3["slide_json"],
                     pptx_filepath=phase3["filepath"],
                 )
-
-                st.session_state.doc_content = result["doc_content"]
-                st.session_state.slide_json = result["slide_json"]
-                st.session_state.review_result = result["review_result"]
-                st.session_state.filepath = result["filepath"]
+                st.session_state.doc_content = phase2["doc_content"]
+                st.session_state.slide_json = phase3["slide_json"]
+                st.session_state.review_result = phase3["review_result"]
+                st.session_state.filepath = phase3["filepath"]
                 st.session_state.doc_filepath = asset_paths["doc_filepath"]
                 st.session_state.slide_filepath = asset_paths["slide_filepath"]
                 st.session_state.phase = "done"
                 st.rerun()
 
-    with col3:
-        if st.button("🔄 Quay lại nhập chủ đề", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+        with col2:
+            if st.button("Sua outline", use_container_width=True):
+                if feedback.strip():
+                    result = revise_outline_with_human_feedback(
+                        current_outline=st.session_state.outline_json,
+                        feedback=feedback,
+                        topic=st.session_state.topic,
+                        provider=st.session_state.provider,
+                        api_key=st.session_state.api_key if st.session_state.api_key else None,
+                    )
+                    if result["error"]:
+                        st.error(f"Loi sua outline: {result['error']}")
+                    else:
+                        st.session_state.outline_json = result["outline_json"]
+                        st.session_state.outline_display = result["outline_display"]
+                        st.session_state.review_logs.extend(result.get("review_logs", []))
+                        st.session_state.human_outline_feedback = ""
+                        st.success("Da cap nhat outline.")
+                        st.rerun()
+                else:
+                    st.warning("Vui long nhap feedback truoc khi sua.")
+
+        with col3:
+            if st.button("Quay lai", use_container_width=True):
+                reset_app()
+        st.markdown("</div>", unsafe_allow_html=True)
+
+        with st.expander("Xem outline JSON"):
+            if st.session_state.outline_json:
+                st.code(st.session_state.outline_json, language="json")
+
+
+def render_review_logs(logs):
+    """Hien thi logs co nhom mau."""
+    if not logs:
+        st.info("Chua co review log.")
+        return
+
+    for idx, log in enumerate(logs, start=1):
+        label = f"Log {idx}"
+        if "DAT" in log.upper():
+            st.success(log)
+        elif "CAN SUA" in log.upper() or "Loi" in log:
+            st.warning(log)
+        elif "Review" in log or "review" in log:
+            with st.expander(label, expanded=False):
+                st.text(log)
+        else:
+            st.markdown(log)
 
 
 def render_done_phase():
-    """Phase: Hoàn thành - Hiển thị bộ sản phẩm cuối cho người dùng."""
-    st.title("✅ Hoàn thành!")
-    st.markdown(f"**Chủ đề:** {st.session_state.topic}")
-    st.markdown(f"**Theme:** {THEMES[st.session_state.theme_name]['name']}")
-    st.markdown("---")
+    """Trang ket qua."""
+    render_hero(
+        "Bo San Pham Da San Sang",
+        "Ban co the tai xuong PowerPoint, xem speaker doc, slide JSON va log review trong cung mot man hinh.",
+    )
+
+    render_metric_cards(
+        [
+            ("Chu de", st.session_state.topic or "-"),
+            ("Theme", THEMES[st.session_state.theme_name]["name"]),
+            ("Review logs", str(len(st.session_state.get("review_logs", [])))),
+            ("Trang thai", "Done"),
+        ]
+    )
 
     col1, col2, col3 = st.columns(3)
 
@@ -466,7 +669,7 @@ def render_done_phase():
             doc_data = f.read()
         with col1:
             st.download_button(
-                label="📥 Download Doc",
+                label="Tai speaker doc",
                 data=doc_data,
                 file_name=os.path.basename(doc_filepath),
                 mime="text/markdown",
@@ -479,7 +682,7 @@ def render_done_phase():
             slide_data = f.read()
         with col2:
             st.download_button(
-                label="📥 Download Slide JSON",
+                label="Tai slide JSON",
                 data=slide_data,
                 file_name=os.path.basename(slide_filepath),
                 mime="application/json",
@@ -492,132 +695,106 @@ def render_done_phase():
             file_data = f.read()
         with col3:
             st.download_button(
-                label="📥 Download PowerPoint",
+                label="Tai PowerPoint",
                 data=file_data,
                 file_name=os.path.basename(filepath),
-                mime="application/vnd.openxmlformats-offencedocument.presentationml.presentation",
+                mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
                 use_container_width=True,
             )
     else:
-        st.warning("⚠️ Không tìm thấy file PowerPoint")
+        with col3:
+            st.warning("Khong tim thay file PowerPoint.")
 
-    st.markdown("---")
-
-    tab1, tab2, tab3, tab4 = st.tabs([
-        "📄 Tài liệu Chi tiết",
-        "🧩 Slide JSON",
-        "📝 Đánh giá chất lượng",
-        "🔍 Review Logs",
-    ])
+    tab1, tab2, tab3, tab4 = st.tabs(
+        ["Speaker Doc", "Slide JSON", "Danh gia slide", "Review logs"]
+    )
 
     with tab1:
-        st.subheader("📖 Tài liệu chi tiết")
         if st.session_state.doc_content:
             st.markdown(st.session_state.doc_content)
-
         else:
-            st.info("Không có tài liệu")
+            st.info("Khong co speaker doc.")
 
     with tab2:
-        st.subheader("🧩 Slide JSON cuối cùng")
         if st.session_state.get("slide_json"):
             st.code(st.session_state.get("slide_json", "{}"), language="json")
         else:
-            st.info("Không có slide JSON")
+            st.info("Khong co slide JSON.")
 
     with tab3:
-        st.subheader("📝 Đánh giá chất lượng Slide")
         if st.session_state.review_result:
             st.text(st.session_state.review_result)
         else:
-            st.info("Không có đánh giá")
+            st.info("Khong co ket qua review slide.")
 
     with tab4:
-        st.subheader("🔍 Chi tiết quá trình Auto-Review")
-        st.markdown("Dưới đây là log chi tiết các vòng auto-review mà Agent đã thực hiện:")
-        for log in st.session_state.get("review_logs", []):
-            if log.startswith("✅"):
-                st.success(log)
-            elif log.startswith("⚠️"):
-                st.warning(log)
-            elif log.startswith("🔄"):
-                st.info(log)
-            elif log.startswith("📝"):
-                with st.expander("📋 Chi tiết review", expanded=False):
-                    st.text(log.replace(f"📝 Kết quả review", "Kết quả review"))
-            else:
-                st.markdown(log)
+        render_review_logs(st.session_state.get("review_logs", []))
 
-    # Nút bắt đầu lại
     st.markdown("---")
-    if st.button("🔄 Tạo slide mới", use_container_width=True):
-        for key in list(st.session_state.keys()):
-            del st.session_state[key]
-        st.rerun()
+    if st.button("Tao de bai moi", use_container_width=True):
+        reset_app()
 
 
 def render_error_phase():
-    """Phase: Lỗi."""
-    st.title("❌ Có lỗi xảy ra")
-    st.markdown(f"**Chủ đề:** {st.session_state.topic}")
-    st.markdown("---")
+    """Trang loi."""
+    render_hero(
+        "Pipeline Gap Loi",
+        "He thong dung lai o mot pha trong workflow. Ban co the xem log, san pham tam thoi va thu lai.",
+    )
 
     failed_phase = st.session_state.get("failed_phase", "unknown")
     phase_names = {
-        "research": "Nghiên cứu (Phase 1)",
-        "doc": "Tạo tài liệu (Phase 2)",
-        "slide": "Tạo slide (Phase 3)",
+        "outline": "Tao/validate outline",
+        "doc": "Research + speaker doc",
+        "slide": "Tao slide",
     }
-    st.error(f"⚠️ Lỗi ở giai đoạn: **{phase_names.get(failed_phase, failed_phase)}**")
+    st.error(f"Loi o giai doan: {phase_names.get(failed_phase, failed_phase)}")
 
     for err in st.session_state.errors:
-        st.error(f"⚠️ {err}")
+        st.error(err)
 
-    # Hiển thị review logs nếu có
-    if st.session_state.get("review_logs"):
-        with st.expander("🔍 Review Logs"):
-            for log in st.session_state.review_logs:
-                st.markdown(log)
+    left, right = st.columns([1.1, 1], gap="large")
 
-    # Hiển thị sản phẩm đã tạo được (nếu có)
-    if st.session_state.doc_content:
-        with st.expander("📄 Tài liệu đã tạo (có thể xem)"):
-            st.markdown(st.session_state.doc_content)
+    with left:
+        if st.session_state.outline_display:
+            with st.expander("Outline da tao", expanded=True):
+                st.text(st.session_state.outline_display)
 
-    if st.session_state.outline_display:
-        with st.expander("📋 Outline đã tạo"):
-            st.text(st.session_state.outline_display)
+        if st.session_state.doc_content:
+            with st.expander("Speaker doc tam thoi"):
+                st.markdown(st.session_state.doc_content)
 
-    st.markdown("### 💡 Gợi ý khắc phục:")
-    st.markdown("""
-    1. **Kiểm tra API Key** - Đảm bảo API key đúng và còn hạn
-    2. **Kiểm tra Provider** - Đảm bảo chọn đúng LLM provider
-    3. **Thử lại** - Đôi khi LLM trả về lỗi tạm thời
-    4. **Đơn giản hóa chủ đề** - Thử chủ đề ngắn gọn hơn
-    """)
+    with right:
+        with st.expander("Review logs", expanded=True):
+            render_review_logs(st.session_state.get("review_logs", []))
+
+        st.subheader("Goi y khac phuc")
+        st.markdown(
+            """
+            1. Kiem tra API key va provider dang chon.
+            2. Thu doi review mode neu ban muon kiem soat outline thu cong.
+            3. Rut gon chu de neu de bai qua rong.
+            4. Thu lai sau va cap nhat feedback neu can.
+            """
+        )
 
     col1, col2 = st.columns(2)
     with col1:
-        if st.button("🔄 Thử lại", use_container_width=True):
+        if st.button("Thu lai", use_container_width=True):
             st.session_state.errors = []
             st.session_state.phase = "processing"
             st.rerun()
-
     with col2:
-        if st.button("🏠 Bắt đầu lại", use_container_width=True):
-            for key in list(st.session_state.keys()):
-                del st.session_state[key]
-            st.rerun()
+        if st.button("Bat dau lai", use_container_width=True):
+            reset_app()
 
 
-# ============================================
-# Main Render
-# ============================================
 def main():
+    inject_styles()
+    init_session_state()
     render_sidebar()
 
     phase = st.session_state.phase
-
     if phase == "input":
         render_input_phase()
     elif phase == "processing":

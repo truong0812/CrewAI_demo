@@ -1,5 +1,5 @@
 from .researcher import create_researcher
 from .content_strategist import create_content_strategist
-from .doc_writer import create_doc_writer
+from .speaker_doc_writer import create_speaker_doc_writer
 from .slide_designer import create_slide_designer
 from .reviewer import create_reviewer, create_outline_reviewer, create_doc_reviewer

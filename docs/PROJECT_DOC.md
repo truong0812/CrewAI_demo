@@ -40,11 +40,14 @@ Chứa:
 Định nghĩa vai trò và backstory cho từng agent. Các agent chỉ chịu trách nhiệm về năng lực chuyên môn của mình, không orchestration.
 
 Danh sách:
-- `researcher.py`
-- `content_strategist.py`
-- `doc_writer.py`
-- `slide_designer.py`
-- `reviewer.py`
+- `researcher.py` — Agent nghiên cứu nội dung
+- `content_strategist.py` — Agent tạo và sửa outline
+- `speaker_doc_writer.py` — Agent viết speaker doc chi tiết (agent chính cho Phase 2)
+- `doc_writer.py` — Agent viết tài liệu (backup, hiện không dùng trong pipeline chính)
+- `slide_designer.py` — Agent tạo slide JSON
+- `reviewer.py` — 3 reviewer agents: outline, doc, slide
+
+Tất cả agent sử dụng chung helper `create_llm_instance()` từ `config.py` để tạo LLM, tránh code duplication.
 
 ### `tasks/`
 
@@ -266,11 +269,13 @@ Mitigation nên làm tiếp:
 
 ## 10. Điểm yếu hiện tại
 
-- Chưa có test
+- Chưa có test suite tự động
 - Prompt đang dài và lặp nhiều giữa task/agent
 - Coupling khá lớn giữa UI và orchestration function
 - Một số helper nội bộ như `_save_final_assets` đang được import trực tiếp từ UI
-- README cũ từng lệch so với behavior thật, nên cần duy trì tài liệu sát code
+- Chưa có retry/backoff cho rate limit
+- Chưa có persistence cho session workflow ngoài Streamlit session state
+- CLI chưa expose `human review mode`
 
 ## 11. Đề xuất refactor
 
@@ -342,3 +347,54 @@ Việc nên ưu tiên tiếp theo là:
 - tăng độ ổn định với retry/backoff
 - thêm test
 - chuẩn hóa schema và tài liệu để giảm drift giữa code và docs
+
+---
+
+## 15. Changelog
+
+### v1.1 — Bug fixes & refactoring (2026-04-19)
+
+#### 🔧 Refactoring: Shared LLM creation helper
+
+**Vấn đề:** Mỗi agent file (`researcher.py`, `content_strategist.py`, `slide_designer.py`, `doc_writer.py`, `speaker_doc_writer.py`, `reviewer.py`) đều lặp cùng đoạn code ~8 dòng để tạo LLM instance.
+
+**Giải pháp:** Thêm hàm `create_llm_instance(provider, api_key, base_url_override)` vào `config.py`. Tất cả agent giờ dùng chung helper này.
+
+**Lợi ích:**
+- Giảm code duplication từ ~48 dòng xuống 6 dòng import
+- Dễ bảo trì: thay đổi logic tạo LLM chỉ cần sửa 1 chỗ
+- Hỗ trợ `base_url_override` cho provider cần config runtime
+
+#### 🐛 Fix: Z AI base_url không được truyền từ UI
+
+**Vấn đề:** Streamlit UI (`app.py`) cho người dùng nhập Base URL cho Z AI provider, nhưng giá trị này không bao giờ được truyền vào pipeline. Base URL chỉ đọc từ env var trong `config.py`.
+
+**Giải pháp:** Khi user nhập Z AI base URL trong UI, giá trị được lưu vào cả `session_state` lẫn `os.environ` để `config.py` đọc được.
+
+#### 🐛 Fix: `_is_approved()` default trả về `True`
+
+**Vấn đề:** Hàm `_is_approved()` trong `crew.py` mặc định trả về `True` nếu không tìm thấy "KẾT LUẬN" trong review text. Điều này có nghĩa là nếu LLM trả lời bằng format khác (tiếng Anh, structure khác), pipeline tự động coi là ĐẠT.
+
+**Giải pháp:**
+- Đổi default thành `False` (an toàn hơn)
+- Thêm warning log khi không tìm thấy kết luận
+- Thêm fallback hỗ trợ cả tiếng Việt không dấu
+
+#### 🧹 Dead code: `doc_writer` import
+
+**Vấn đề:** `agents/__init__.py` import `create_doc_writer` từ `doc_writer.py`, nhưng hàm này không được gọi ở bất kỳ đâu trong dự án. Pipeline thực tế dùng `create_speaker_doc_writer`.
+
+**Giải pháp:** Xóa import `create_doc_writer` khỏi `agents/__init__.py`. File `doc_writer.py` được giữ lại làm backup.
+
+#### 📝 Cập nhật `.env.example`
+
+**Thay đổi:**
+- Thêm block cấu hình Groq (trước đây thiếu)
+- Sửa Gemini model từ `gemini/gemini-1.5-pro` thành `gemini/gemini-2.0-flash` (đồng bộ với `config.py` default)
+
+#### 📝 Cập nhật documentation
+
+**Thay đổi:**
+- `docs/PROJECT_DOC.md`: Cập nhật danh sách agents cho chính xác, thêm mô tả từng agent
+- `docs/PROJECT_DOC.md`: Cập nhật section điểm yếu
+- `docs/PROJECT_DOC.md`: Thêm section changelog này

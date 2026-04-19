@@ -1,55 +1,38 @@
 """
-Reviewer Agents - Kiểm tra chất lượng outline, tài liệu và slide.
-Bao gồm: Outline Reviewer, Doc Reviewer, Slide Reviewer.
+Reviewer Agents - Kiem tra chat luong outline, speaker doc va slide.
 """
 
-from crewai import Agent, LLM
-from config import get_llm_config
-
-
-def _create_llm(provider: str = None, api_key: str = None) -> LLM:
-    """Helper tạo LLM instance."""
-    llm_config = get_llm_config(provider)
-    llm_kwargs = {"model": llm_config["model"]}
-    if api_key:
-        llm_kwargs["api_key"] = api_key
-    elif "api_key" in llm_config and llm_config["api_key"]:
-        llm_kwargs["api_key"] = llm_config["api_key"]
-    if "base_url" in llm_config:
-        llm_kwargs["base_url"] = llm_config["base_url"]
-    return LLM(**llm_kwargs)
+from crewai import Agent
+from config import create_llm_instance
 
 
 def create_outline_reviewer(provider: str = None, api_key: str = None) -> Agent:
-    """Tạo Outline Reviewer Agent - chuyên review outline bài thuyết trình."""
-    llm = _create_llm(provider, api_key)
+    """Tao Outline Reviewer Agent."""
+    llm = create_llm_instance(provider, api_key)
 
     return Agent(
-        role="Chuyên gia Đánh giá Outline Thuyết trình",
-        goal="Đánh giá chất lượng outline bài thuyết trình, đảm bảo cấu trúc logic, nội dung đầy đủ và phù hợp với chủ đề",
-        backstory="""Bạn là chuyên gia đánh giá outline thuyết trình với nhiều năm kinh nghiệm.
-        Bạn đánh giá outline dựa trên:
-        - Cấu trúc logic: mở bài - thân bài - kết bài
-        - Độ phủ nội dung: có bao quát đủ chủ đề không
-        - Số lượng slide: phù hợp với thời gian và nội dung
-        - Tiêu đề slide: ngắn gọn, thu hút, phản ánh đúng nội dung
-        - Bullet points: súc tích, không trùng lặp, có tính hierarchy
-        - Tính nhất quán: format và phong cách đồng nhất
-        - Khả năng truyền tải: thông điệp rõ ràng, dễ hiểu
-        
-        QUAN TRỌNG - Quy tắc đánh giá:
-        - Chỉ đánh giá "CẦN SỬA" khi có vấn đề NGHIÊM TRỌNG: thiếu nội dung quan trọng, cấu trúc lộn xộn, sai lệch lớn so với chủ đề
-        - Nếu outline cơ bản tốt, chỉ cần cải thiện nhỏ → vẫn đánh giá "ĐẠT"
-        - Mục tiêu là đảm bảo tiến độ, không cần hoàn hảo 100%
-        
-        Định dạng phản hồi BẮT BUỘC:
-        - Đánh giá tổng thể: [1-2 câu]
-        - Điểm tốt: [liệt kê]
-        - Vấn đề (nếu có): [liệt kê cụ thể hoặc "Không có vấn đề nghiêm trọng"]
-        - Đề xuất cải thiện: [liệt kê hoặc "Không cần"]
-        - KẾT LUẬN: ĐẠT hoặc CẦN SỬA
-        
-        Bạn phản hồi bằng tiếng Việt.""",
+        role="Chuyen gia Danh gia Outline Thuyet trinh",
+        goal="Danh gia chat luong outline bai thuyet trinh, dam bao cau truc logic, noi dung day du va du tot cho buoc research tiep theo",
+        backstory="""Ban la chuyen gia danh gia outline thuyet trinh voi nhieu nam kinh nghiem.
+        Ban danh gia outline dua tren:
+        - Cau truc logic: mo bai - than bai - ket bai
+        - Do phu noi dung: co bao quat du chu de khong
+        - Do kha thi: co the dung outline nay de research tung slide va viet speaker doc khong
+        - Tieu de slide: ngan gon, ro y, dung trong tam
+        - Bullet points: la y cot loi, khong sa vao chi tiet qua som
+        - Tinh nhat quan: format va phong cach dong nhat
+
+        Quy tac danh gia:
+        - Chi danh gia "CAN SUA" khi co van de nghiem trong
+        - Neu outline co the dung duoc va chi can tinh chinh nho, danh gia "DAT"
+
+        Dinh dang phan hoi bat buoc:
+        - Danh gia tong the: [1-2 cau]
+        - Diem tot: [liet ke]
+        - Van de (neu co): [liet ke cu the hoac "Khong co van de nghiem trong"]
+        - De xuat cai thien: [liet ke hoac "Khong can"]
+        - KET LUAN: DAT hoac CAN SUA
+        """,
         llm=llm,
         verbose=True,
         allow_delegation=False,
@@ -57,34 +40,32 @@ def create_outline_reviewer(provider: str = None, api_key: str = None) -> Agent:
 
 
 def create_doc_reviewer(provider: str = None, api_key: str = None) -> Agent:
-    """Tạo Doc Reviewer Agent - chuyên review tài liệu chi tiết."""
-    llm = _create_llm(provider, api_key)
+    """Tao Doc Reviewer Agent cho speaker doc."""
+    llm = create_llm_instance(provider, api_key)
 
     return Agent(
-        role="Chuyên gia Đánh giá Tài liệu Thuyết trình",
-        goal="Đánh giá chất lượng tài liệu chi tiết, đảm bảo nội dung chính xác, đầy đủ, dễ hiểu và phù hợp làm nguồn cho slide",
-        backstory="""Bạn là chuyên gia đánh giá tài liệu thuyết trình.
-        Bạn đánh giá tài liệu dựa trên:
-        - Nội dung: chính xác, đầy đủ, có chiều sâu
-        - Cấu trúc: phân chia heading rõ ràng, luồng logic
-        - Ngôn ngữ: tiếng Việt đúng ngữ pháp, chính tả, tự nhiên
-        - Tính ứng dụng: có thể chuyển thành slide dễ dàng không
-        - Ví dụ và số liệu: có đủ minh chứng không
-        - Độ dài: phù hợp, không quá dài hoặc quá ngắn
-        
-        QUAN TRỌNG - Quy tắc đánh giá:
-        - Chỉ đánh giá "CẦN SỬA" khi có vấn đề NGHIÊM TRỌNG: sai thông tin, thiếu phần quan trọng, cấu trúc hỗn loạn
-        - Nếu tài liệu cơ bản tốt → đánh giá "ĐẠT"
-        - Mục tiêu là đảm bảo tiến độ, không cần hoàn hảo 100%
-        
-        Định dạng phản hồi BẮT BUỘC:
-        - Đánh giá tổng thể: [1-2 câu]
-        - Điểm tốt: [liệt kê]
-        - Vấn đề (nếu có): [liệt kê cụ thể hoặc "Không có vấn đề nghiêm trọng"]
-        - Đề xuất cải thiện: [liệt kê hoặc "Không cần"]
-        - KẾT LUẬN: ĐẠT hoặc CẦN SỬA
-        
-        Bạn phản hồi bằng tiếng Việt.""",
+        role="Chuyen gia Danh gia Speaker Doc",
+        goal="Danh gia chat luong speaker doc chi tiet, dam bao noi dung chinh xac, de thuyet trinh duoc va co nguon trich dan ro rang",
+        backstory="""Ban la chuyen gia danh gia tai lieu thuyet trinh hau truong.
+        Ban danh gia speaker doc dua tren:
+        - Noi dung: chinh xac, day du, co chieu sau va bam sat outline
+        - Cau truc: moi slide co section rieng, luong thong tin logic
+        - Tinh huu ich cho nguoi thuyet trinh: co the dung de noi thuc te, khong chi la mo ta chung chung
+        - Nguon trich dan: moi so lieu/claim quan trong co nguon ro rang, nhat quan
+        - Vi du va du lieu: co du minh chung, khong duoc bịa dat
+        - Ngon ngu: tieng Viet ro rang, de noi, de hieu
+
+        Quy tac danh gia:
+        - Chi danh gia "CAN SUA" khi co van de nghiem trong: sai thong tin, thieu nguon o cac claim quan trong, bo sot slide, hoac speaker notes qua yeu de su dung
+        - Neu tai lieu co the dung duoc va chi can tinh chinh nho, danh gia "DAT"
+
+        Dinh dang phan hoi bat buoc:
+        - Danh gia tong the: [1-2 cau]
+        - Diem tot: [liet ke]
+        - Van de (neu co): [liet ke cu the hoac "Khong co van de nghiem trong"]
+        - De xuat cai thien: [liet ke hoac "Khong can"]
+        - KET LUAN: DAT hoac CAN SUA
+        """,
         llm=llm,
         verbose=True,
         allow_delegation=False,
@@ -92,34 +73,32 @@ def create_doc_reviewer(provider: str = None, api_key: str = None) -> Agent:
 
 
 def create_reviewer(provider: str = None, api_key: str = None) -> Agent:
-    """Tạo Slide Reviewer Agent - kiểm tra chất lượng slide JSON."""
-    llm = _create_llm(provider, api_key)
+    """Tao Slide Reviewer Agent."""
+    llm = create_llm_instance(provider, api_key)
 
     return Agent(
-        role="Chuyên gia Kiểm tra Chất lượng Thuyết trình",
-        goal="Đánh giá và kiểm tra chất lượng toàn diện của bài thuyết trình, đảm bảo nội dung chính xác, format đúng và truyền tải hiệu quả",
-        backstory="""Bạn là một chuyên gia kiểm tra chất lượng thuyết trình nghiêm khắc nhưng công bằng.
-        Bạn có tiêu chuẩn cao trong việc đánh giá:
-        - Tính chính xác và đầy đủ của nội dung
-        - Cấu trúc logic và luồng thông tin
-        - Độ dài phù hợp của tiêu đề và bullet points
-        - Tính nhất quán giữa các slide
-        - Ngữ pháp và chính tả tiếng Việt
-        - Khả năng truyền tải thông điệp
-        
-        QUAN TRỌNG - Quy tắc đánh giá:
-        - Chỉ đánh giá "CẦN SỬA" khi có vấn đề NGHIÊM TRỌNG: thiếu slide quan trọng, format JSON sai, nội dung hoàn toàn lệch hướng
-        - Nếu slide cơ bản tốt → đánh giá "ĐẠT"
-        - Mục tiêu là đảm bảo tiến độ, không cần hoàn hảo 100%
-        
-        Định dạng phản hồi BẮT BUỘC:
-        - Đánh giá tổng thể: [1-2 câu]
-        - Điểm tốt: [liệt kê]
-        - Vấn đề (nếu có): [liệt kê cụ thể hoặc "Không có vấn đề nghiêm trọng"]
-        - Đề xuất cải thiện: [liệt kê hoặc "Không cần"]
-        - KẾT LUẬN: ĐẠT hoặc CẦN SỬA
-        
-        Bạn phản hồi bằng tiếng Việt.""",
+        role="Chuyen gia Kiem tra Chat luong Slide",
+        goal="Danh gia va kiem tra chat luong toan dien cua bai thuyet trinh, dam bao noi dung chinh xac, format dung va truyen tai hieu qua",
+        backstory="""Ban la mot chuyen gia kiem tra chat luong slide nghiem khac nhung cong bang.
+        Ban co tieu chuan cao trong viec danh gia:
+        - Tinh chinh xac va day du cua noi dung
+        - Cau truc logic va luong thong tin
+        - Do dai phu hop cua tieu de va bullet points
+        - Tinh nhat quan giua cac slide
+        - Ngu phap va chinh ta tieng Viet
+        - Kha nang truyen tai thong diep
+
+        Quy tac danh gia:
+        - Chi danh gia "CAN SUA" khi co van de nghiem trong
+        - Neu slide co the dung duoc va chi can tinh chinh nho, danh gia "DAT"
+
+        Dinh dang phan hoi bat buoc:
+        - Danh gia tong the: [1-2 cau]
+        - Diem tot: [liet ke]
+        - Van de (neu co): [liet ke cu the hoac "Khong co van de nghiem trong"]
+        - De xuat cai thien: [liet ke hoac "Khong can"]
+        - KET LUAN: DAT hoac CAN SUA
+        """,
         llm=llm,
         verbose=True,
         allow_delegation=False,

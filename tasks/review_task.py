@@ -1,113 +1,115 @@
 """
-Review Tasks - Nhiệm vụ kiểm tra chất lượng outline, tài liệu và slide.
+Review Tasks - Nhiem vu kiem tra chat luong outline, speaker doc va slide.
 """
 
 from crewai import Task
 
 
 def create_outline_review_task(agent, outline_json: str, topic: str) -> Task:
-    """Tạo task kiểm tra chất lượng outline bài thuyết trình."""
+    """Tao task kiem tra chat luong outline bai thuyet trinh."""
     return Task(
         description=f"""
-        Hãy kiểm tra và đánh giá chất lượng của outline bài thuyết trình sau:
-        
-        Chủ đề yêu cầu: {topic}
-        
-        === OUTLINE BÀI THUYẾT TRÌNH ===
+        Hay kiem tra va danh gia chat luong cua outline bai thuyet trinh sau.
+
+        Chu de yeu cau: {topic}
+
+        === OUTLINE ===
         {outline_json}
-        === HẾT OUTLINE ===
-        
-        Tiêu chí đánh giá:
-        1. ĐỘ PHỦ: Outline có bao quát đủ chủ đề "{topic}" không?
-        2. CẤU TRÚC: Có luồng logic (mở bài → thân bài → kết bài) không?
-        3. SỐ LƯỢNG SLIDE: Phù hợp với độ phức tạp của chủ đề không?
-        4. TIÊU ĐỀ: Ngắn gọn, thu hút, phản ánh đúng nội dung không?
-        5. BULLET POINTS: Súc tích, không trùng lặp, có phân cấp rõ ràng không?
-        6. NHẤT QUÁN: Format đồng nhất giữa các slide không?
-        7. TÍNH ỨNG DỤNG: Có thể phát triển thành bài thuyết trình thực tế không?
-        
-        QUAN TRỌNG: 
-        - Chỉ đánh giá "CẦN SỬA" nếu có vấn đề NGHIÊM TRỌNG
-        - Nếu outline cơ bản tốt → "ĐẠT"
-        
-        Định dạng kết quả BẮT BUỘC:
-        - Đánh giá tổng thể: [1-2 câu]
-        - Điểm tốt: [liệt kê]
-        - Vấn đề (nếu có): [liệt kê cụ thể]
-        - Đề xuất cải thiện: [liệt kê]
-        - KẾT LUẬN: ĐẠT hoặc CẦN SỬA
+        === HET OUTLINE ===
+
+        Tieu chi danh gia:
+        1. Do phu: outline co bao quat du chu de "{topic}" khong?
+        2. Cau truc: co luong logic mo bai -> than bai -> ket bai khong?
+        3. Kha nang research: tung slide co du ro de research sau do khong?
+        4. Tieu de slide: ngan gon, ro y, phan anh dung noi dung khong?
+        5. Bullet points: la y cot loi, khong qua chi tiet, khong trung lap khong?
+        6. Tinh nhat quan: format va muc do chi tiet co dong deu khong?
+        7. Tinh kha thi: co the dung outline nay de viet speaker doc chat luong cao khong?
+
+        QUAN TRONG:
+        - Chi danh gia "CAN SUA" neu co van de nghiem trong
+        - Neu outline co the dung duoc va chi can tinh chinh nho -> "DAT"
+
+        Dinh dang ket qua bat buoc:
+        - Danh gia tong the: [1-2 cau]
+        - Diem tot: [liet ke]
+        - Van de (neu co): [liet ke cu the]
+        - De xuat cai thien: [liet ke]
+        - KET LUAN: DAT hoac CAN SUA
         """,
         agent=agent,
-        expected_output="Báo cáo đánh giá chất lượng outline bằng tiếng Việt. KẾT LUẬN phải là 'ĐẠT' hoặc 'CẦN SỬA'.",
+        expected_output="Bao cao danh gia chat luong outline bang tieng Viet. KET LUAN phai la 'DAT' hoac 'CAN SUA'.",
     )
 
 
 def create_doc_review_task(agent, doc_content: str, topic: str) -> Task:
-    """Tạo task kiểm tra chất lượng tài liệu chi tiết."""
+    """Tao task kiem tra chat luong speaker doc."""
     return Task(
         description=f"""
-        Hãy kiểm tra và đánh giá chất lượng của tài liệu chi tiết sau:
-        
-        Chủ đề: {topic}
-        
-        === TÀI LIỆU CHI TIẾT ===
+        Hay kiem tra va danh gia chat luong cua speaker doc sau.
+
+        Chu de: {topic}
+
+        === SPEAKER DOC ===
         {doc_content}
-        === HẾT TÀI LIỆU ===
-        
-        Tiêu chí đánh giá:
-        1. NỘI DUNG: Chính xác, đầy đủ, có chiều sâu không?
-        2. CẤU TRÚC: Heading rõ ràng, luồng logic không?
-        3. NGÔN NGỮ: Tiếng Việt đúng ngữ pháp, chính tả, tự nhiên không?
-        4. TÍNH ỨNG DỤNG: Có thể chuyển thành slide dễ dàng không?
-        5. VÍ DỤ & SỐ LIỆU: Có đủ minh chứng không?
-        6. ĐỘ DÀI: Phù hợp, không quá dài hoặc quá ngắn?
-        
-        QUAN TRỌNG:
-        - Chỉ đánh giá "CẦN SỬA" nếu có vấn đề NGHIÊM TRỌNG
-        - Nếu tài liệu cơ bản tốt → "ĐẠT"
-        
-        Định dạng kết quả BẮT BUỘC:
-        - Đánh giá tổng thể: [1-2 câu]
-        - Điểm tốt: [liệt kê]
-        - Vấn đề (nếu có): [liệt kê cụ thể]
-        - Đề xuất cải thiện: [liệt kê]
-        - KẾT LUẬN: ĐẠT hoặc CẦN SỬA
+        === HET SPEAKER DOC ===
+
+        Tieu chi danh gia:
+        1. Noi dung: chinh xac, day du, co chieu sau va bam sat outline khong?
+        2. Cau truc: moi slide co section ro rang va de theo doi khong?
+        3. Tinh huu ich cho nguoi thuyet trinh: co giup noi thuc te, tu tin va co logic khong?
+        4. Nguon trich dan: moi so lieu/claim quan trong co nguon ro rang va nhat quan khong?
+        5. Vi du/case study: co du minh chung, cu the, khong chung chung khong?
+        6. Bullet points va speaker notes: co tach biet ro, dung vai tro, phu hop de tao slide khong?
+        7. Ngon ngu: tieng Viet ro rang, de hieu, de noi khong?
+
+        QUAN TRONG:
+        - Chi danh gia "CAN SUA" neu co van de nghiem trong
+        - Thieu nguon cho cac claim quan trong duoc xem la van de nghiem trong
+        - Neu tai lieu da dung duoc va chi can tinh chinh nho -> "DAT"
+
+        Dinh dang ket qua bat buoc:
+        - Danh gia tong the: [1-2 cau]
+        - Diem tot: [liet ke]
+        - Van de (neu co): [liet ke cu the]
+        - De xuat cai thien: [liet ke]
+        - KET LUAN: DAT hoac CAN SUA
         """,
         agent=agent,
-        expected_output="Báo cáo đánh giá chất lượng tài liệu bằng tiếng Việt. KẾT LUẬN phải là 'ĐẠT' hoặc 'CẦN SỬA'.",
+        expected_output="Bao cao danh gia chat luong speaker doc bang tieng Viet. KET LUAN phai la 'DAT' hoac 'CAN SUA'.",
     )
 
 
 def create_review_task(agent, slide_json: str) -> Task:
-    """Tạo task kiểm tra chất lượng bài thuyết trình (slide JSON)."""
+    """Tao task kiem tra chat luong slide JSON."""
     return Task(
         description=f"""
-        Hãy kiểm tra và đánh giá chất lượng của bài thuyết trình sau:
-        
-        === NỘI DUNG BÀI THUYẾT TRÌNH ===
+        Hay kiem tra va danh gia chat luong cua bai thuyet trinh sau.
+
+        === SLIDE JSON ===
         {slide_json}
-        === HẾT NỘI DUNG ===
-        
-        Tiêu chí đánh giá:
-        1. NỘI DUNG: Thông tin có chính xác, đầy đủ và phù hợp không?
-        2. CẤU TRÚC: Luồng thông tin có logic không? Slide có sắp xếp hợp lý không?
-        3. ĐỘ DÀI: Số lượng slide và bullet points có phù hợp không?
-        4. TIÊU ĐỀ: Các tiêu đề có ngắn gọn, thu hút và phản ánh đúng nội dung không?
-        5. BULLET POINTS: Có súc tích, dễ đọc và không quá dài không?
-        6. NHẤT QUÁN: Format và phong cách có nhất quán giữa các slide không?
-        7. NGÔN NGỮ: Tiếng Việt có đúng ngữ pháp và chính tả không?
-        
-        QUAN TRỌNG:
-        - Chỉ đánh giá "CẦN SỬA" nếu có vấn đề NGHIÊM TRỌNG
-        - Nếu slide cơ bản tốt → "ĐẠT"
-        
-        Định dạng kết quả BẮT BUỘC:
-        - Đánh giá tổng thể: [1-2 câu]
-        - Điểm tốt: [liệt kê]
-        - Vấn đề (nếu có): [liệt kê cụ thể]
-        - Đề xuất cải thiện: [liệt kê]
-        - KẾT LUẬN: ĐẠT hoặc CẦN SỬA
+        === HET NOI DUNG ===
+
+        Tieu chi danh gia:
+        1. Noi dung: thong tin co chinh xac, day du va phu hop khong?
+        2. Cau truc: luong thong tin co logic khong?
+        3. Do dai: so luong slide va bullet points co phu hop khong?
+        4. Tieu de: ngan gon, thu hut va phan anh dung noi dung khong?
+        5. Bullet points: co suc tich, de doc va khong qua dai khong?
+        6. Tinh nhat quan: format va phong cach co dong deu giua cac slide khong?
+        7. Ngon ngu: tieng Viet co dung ngu phap va chinh ta khong?
+
+        QUAN TRONG:
+        - Chi danh gia "CAN SUA" neu co van de nghiem trong
+        - Neu slide co the dung duoc va chi can tinh chinh nho -> "DAT"
+
+        Dinh dang ket qua bat buoc:
+        - Danh gia tong the: [1-2 cau]
+        - Diem tot: [liet ke]
+        - Van de (neu co): [liet ke cu the]
+        - De xuat cai thien: [liet ke]
+        - KET LUAN: DAT hoac CAN SUA
         """,
         agent=agent,
-        expected_output="Báo cáo đánh giá chất lượng bằng tiếng Việt. KẾT LUẬN phải là 'ĐẠT' hoặc 'CẦN SỬA'.",
+        expected_output="Bao cao danh gia chat luong slide bang tieng Viet. KET LUAN phai la 'DAT' hoac 'CAN SUA'.",
     )

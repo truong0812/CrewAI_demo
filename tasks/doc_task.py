@@ -1,104 +1,119 @@
 """
-Doc Tasks - Nhiệm vụ tạo tài liệu chi tiết và chỉnh sửa từ góp ý.
+Writer Tasks - Nhiem vu viet speaker doc chi tiet cho nguoi thuyet trinh.
 """
 
 from crewai import Task
 
 
-def create_doc_task(agent, approved_outline: str, topic: str) -> Task:
-    """Tạo task viết tài liệu chi tiết (Markdown) từ outline đã duyệt."""
+def create_doc_task(agent, approved_outline: str, research_result: str, topic: str) -> Task:
+    """Tao task viet speaker doc chi tiet (Markdown) cho nguoi thuyet trinh."""
     return Task(
         description=f"""
-        Dựa trên outline bài thuyết trình đã được duyệt dưới đây, hãy viết một tài liệu chi tiết bằng Markdown.
+        Dua tren outline da duyet va ket qua research, hay viet mot SPEAKER DOC CHI TIET bang Markdown
+        danh cho NGUOI THUYET TRINH ve chu de "{topic}".
 
-        === OUTLINE ĐÃ DUYỆT ===
+        === OUTLINE DA DUYET ===
         {approved_outline}
-        === HẾT OUTLINE ===
+        === HET OUTLINE ===
 
-        Chủ đề: "{topic}"
+        === KET QUA RESEARCH ===
+        {research_result}
+        === HET KET QUA RESEARCH ===
 
-        Yêu cầu về tài liệu:
-        1. Mỗi slide trong outline tương ứng với một phần (## heading) trong tài liệu
-        2. Mỗi phần phải có:
-           - Nội dung chi tiết, giải thích rõ ràng các bullet points trong outline
-           - Ví dụ thực tế, số liệu, case study (nếu phù hợp)
-           - Bullet points súc tích (tối đa 5-6 điểm) để đưa lên slide
-           - Speaker notes chi tiết hướng dẫn người thuyết trình
-        3. Giữ nguyên cấu trúc: slide tiêu đề → các slide nội dung → slide tóm tắt
-        4. Ngôn ngữ tiếng Việt, văn phong chuyên nghiệp
+        Muc tieu tai lieu:
+        - Giup nguoi thuyet trinh hieu tung slide, noi tu tin va co dan chung ro rang
+        - Khong viet lai slide theo kieu ngan gon; day la tai lieu hau truong, chi tiet
+        - Moi slide trong outline phai tro thanh mot muc rieng trong tai lieu
 
-        Định dạng Markdown yêu cầu:
+        YEU CAU BAT BUOC:
+        1. Moi slide trong outline tuong ung voi mot section Markdown dang:
+           ## Slide X: [Tieu de]
+        2. Moi section phai co day du cac phan sau:
+           - **Muc tieu slide**
+           - **Noi dung thuyet trinh chi tiet**
+           - **Du lieu/vi du/case study nen dung**
+           - **Bullet points dua len slide**
+           - **Speaker notes**
+           - **Nguon tham khao**
+        3. Speaker doc phai chi tiet den muc nguoi thuyet trinh co the dung no de noi 3-7 phut cho moi slide noi dung
+        4. Moi so lieu, thong ke, nhan dinh quan trong, trich dan, du bao deu phai co nguon ro rang
+        5. Neu research khong co can cu cho mot thong tin, khong duoc bo sung nhu mot su that
+        6. Phan "Bullet points dua len slide" phai ngan gon, phu hop de bien thanh slide
+        7. Phan "Nguon tham khao" phai liet ke ro tung nguon da dung trong section do
+
+        QUY CACH NGUON THAM KHAO:
+        - Trong noi dung, gan nguon ngay sau thong tin quan trong
+        - Dung dinh dang: (Nguon: Ten nguon, Nam, URL)
+        - Cuoi section, tong hop lai duoi dang danh sach:
+          - [1] Ten nguon, Nam. Tieu de/bao cao. URL
+          - [2] ...
+        - Uu tien nguon uy tin: co quan nha nuoc, to chuc quoc te, bao cao doanh nghiep/consulting uy tin, paper, dataset, website chinh thuc
+
+        Dinh dang markdown mau:
         ```markdown
-        # [Tiêu đề bài thuyết trình]
+        # [Tieu de bai thuyet trinh]
 
-        ## Slide 1: [Tiêu đề slide]
-        **Loại:** title
-        **Nội dung chi tiết:**
-        [Mô tả chi tiết về nội dung slide này]
+        ## Slide 1: [Tieu de slide]
+        **Loai:** title
 
-        **Bullet points cho slide:**
-        - Điểm chính 1
-        - Điểm chính 2
+        **Muc tieu slide:**
+        [Slide nay dung de lam gi trong mach bai]
 
-        **Speaker notes:**
-        [Hướng dẫn chi tiết cho người thuyết trình]
+        **Noi dung thuyet trinh chi tiet:**
+        [Phan dien giai chi tiet, co nguon trong dong khi can]
 
-        ---
+        **Du lieu/vi du/case study nen dung:**
+        - [Vi du 1] (Nguon: ...)
+        - [Vi du 2] (Nguon: ...)
 
-        ## Slide 2: [Tiêu đề slide]
-        **Loại:** content
-        **Nội dung chi tiết:**
-        [Giải thích chi tiết từng bullet point, bổ sung ví dụ và số liệu]
-
-        **Bullet points cho slide:**
-        - Điểm chính 1
-        - Điểm chính 2
+        **Bullet points dua len slide:**
+        - Diem 1
+        - Diem 2
 
         **Speaker notes:**
-        [Hướng dẫn chi tiết cho người thuyết trình]
+        [Huong dan mo dau, chuyen y, nhan manh, cau hoi goi mo]
+
+        **Nguon tham khao:**
+        - [1] ...
+        - [2] ...
 
         ---
-        ... (tiếp tục cho tất cả slide)
         ```
 
-        QUAN TRỌNG:
-        - Viết đầy đủ, chi tiết nhưng súc tích
-        - Mỗi phần "Nội dung chi tiết" phải có đủ thông tin để người đọc hiểu sâu
-        - Bullet points phải ngắn gọn (< 100 ký tự mỗi điểm)
-        - Speaker notes phải hữu ích cho người thuyết trình
-        - Toàn bộ bằng tiếng Việt
+        QUAN TRONG:
+        - Toan bo bang tieng Viet
+        - Viet ro rang, co chieu sau, khong viet chung chung
+        - Khong bo sot slide nao trong outline
+        - Khong duoc xuat JSON, chi xuat Markdown
         """,
         agent=agent,
-        expected_output="Tài liệu Markdown chi tiết bằng tiếng Việt, bao gồm nội dung mở rộng cho từng slide, bullet points súc tích, và speaker notes. Mỗi slide trong outline tương ứng một phần trong tài liệu.",
+        expected_output="Tai lieu Markdown chi tiet bang tieng Viet danh cho nguoi thuyet trinh, co section theo tung slide, speaker notes huu ich va nguon tham khao ro rang cho moi thong tin quan trong.",
     )
 
 
 def create_revise_doc_task(agent, current_doc: str, feedback: str, topic: str) -> Task:
-    """Tạo task chỉnh sửa tài liệu dựa trên góp ý của người dùng."""
+    """Tao task chinh sua speaker doc dua tren gop y/review."""
     return Task(
         description=f"""
-        Bạn cần chỉnh sửa tài liệu thuyết trình về "{topic}" dựa trên góp ý của người dùng.
+        Ban can chinh sua speaker doc ve "{topic}" dua tren feedback duoi day.
 
-        === TÀI LIỆU HIỆN TẠI ===
+        === SPEAKER DOC HIEN TAI ===
         {current_doc}
-        === HẾT TÀI LIỆU ===
+        === HET SPEAKER DOC ===
 
-        === GÓP Ý CỦA NGƯỜI DÙNG ===
+        === FEEDBACK ===
         {feedback}
-        === HẾT GÓP Ý ===
+        === HET FEEDBACK ===
 
-        Yêu cầu:
-        1. Giữ nguyên cấu trúc Markdown của tài liệu hiện tại
-        2. Áp dụng các thay đổi theo góp ý của người dùng
-        3. Đảm bảo nội dung vẫn phong phú, chi tiết
-        4. Giữ nguyên bullet points súc tích (< 100 ký tự mỗi điểm)
-        5. Cập nhật speaker notes nếu cần thiết
-        6. Đảm bảo luồng thông tin vẫn logic sau khi chỉnh sửa
-
-        QUAN TRỌNG:
-        - Chỉ xuất tài liệu Markdown đã chỉnh sửa, không thêm giải thích
-        - Toàn bộ bằng tiếng Việt
+        Yeu cau:
+        1. Giu nguyen cau truc Markdown tong the cua tai lieu
+        2. Ap dung day du cac thay doi theo feedback
+        3. Dam bao moi thong tin quan trong van co nguon ro rang
+        4. Neu them noi dung moi, phai bo sung nguon tuong ung
+        5. Giu tai lieu o vai tro speaker doc: chi tiet, huu ich, co tinh trinh bay thuc chien
+        6. Khong xoa di phan "Nguon tham khao" cua tung section
+        7. Chi xuat Markdown da chinh sua, khong them giai thich
         """,
         agent=agent,
-        expected_output="Tài liệu Markdown đã chỉnh sửa theo góp ý, giữ nguyên cấu trúc. Toàn bộ tiếng Việt.",
+        expected_output="Speaker doc Markdown da chinh sua theo feedback, giu nguyen tinh chat chi tiet cho nguoi thuyet trinh va nguon tham khao ro rang.",
     )

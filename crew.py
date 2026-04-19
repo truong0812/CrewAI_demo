@@ -1,7 +1,7 @@
 """
-CrewAI Crew orchestration - Tự động hóa toàn bộ pipeline:
-Research → Auto-Review Outline → Doc → Auto-Review Doc → Slide → Auto-Review Slide → Final Assets
-Human chỉ tương tác với sản phẩm cuối (Doc + Slide + PPTX).
+CrewAI Crew orchestration - Tu dong hoa toan bo pipeline:
+Outline (hoac user cung cap) -> Research -> Viet Doc chi tiet -> Slide -> PPTX
+Human co the cung cap outline san hoac de AI tao.
 """
 
 import json
@@ -12,30 +12,129 @@ from crewai import Crew, Process
 
 from agents import (
     create_researcher, create_content_strategist,
-    create_doc_writer, create_slide_designer,
+    create_speaker_doc_writer, create_slide_designer,
     create_reviewer, create_outline_reviewer, create_doc_reviewer,
 )
 from tasks import (
-    create_research_task, create_content_task, create_revise_content_task,
+    create_research_task,
+    create_content_task, create_revise_content_task,
     create_doc_task, create_revise_doc_task,
     create_slide_task,
     create_review_task, create_outline_review_task, create_doc_review_task,
 )
 from tools.pptx_generator import PPTXGenerator
 
-# Số lần tối đa cho auto-review loop
+# So lan toi da cho auto-review loop
 MAX_REVIEW_ITERATIONS = 2
 
 
+def _clean_outline_line(line: str) -> str:
+    """Loai bo ky tu danh dau de parse outline text de dang hon."""
+    return re.sub(r"^\s*(?:[-*+•]+|\d+[.)]|#{1,6})\s*", "", line).strip()
+
+
+def _infer_slide_type(index: int, title: str, total_slides: int) -> str:
+    """Suy ra loai slide tu vi tri va tieu de."""
+    normalized = title.lower()
+    if index == 0 or any(keyword in normalized for keyword in ["mở đầu", "mo dau", "giới thiệu", "gioi thieu", "title"]):
+        return "title"
+    if index == total_slides - 1 or any(keyword in normalized for keyword in ["kết luận", "ket luan", "tóm tắt", "tom tat", "cảm ơn", "cam on", "q&a"]):
+        return "summary"
+    return "content"
+
+
+def parse_outline_text(outline_text: str) -> dict:
+    """Chuyen outline dang van ban/markdown thanh JSON outline noi bo."""
+    raw_lines = [line.rstrip() for line in outline_text.splitlines() if line.strip()]
+    if not raw_lines:
+        raise ValueError("Outline rong")
+
+    title = "Bai thuyet trinh"
+    slides = []
+    current_slide = None
+
+    for line in raw_lines:
+        stripped = line.strip()
+        cleaned = _clean_outline_line(stripped)
+        lower = cleaned.lower()
+
+        if stripped.startswith("# "):
+            title = cleaned or title
+            continue
+
+        is_slide_header = (
+            stripped.startswith("##")
+            or re.match(r"^\s*slide\s*\d+\s*[:.-]", stripped, flags=re.IGNORECASE)
+            or re.match(r"^\s*\d+\s*[.)]\s+\S+", stripped)
+        )
+
+        if is_slide_header:
+            if current_slide:
+                slides.append(current_slide)
+            slide_title = re.sub(r"^\s*slide\s*\d+\s*[:.-]\s*", "", cleaned, flags=re.IGNORECASE)
+            current_slide = {
+                "type": "content",
+                "title": slide_title or f"Slide {len(slides) + 1}",
+                "bullet_points": [],
+            }
+            continue
+
+        if lower.startswith(("notes:", "note:", "ghi chu:", "ghi chú:")):
+            if not current_slide:
+                current_slide = {"type": "content", "title": f"Slide {len(slides) + 1}", "bullet_points": []}
+            current_slide["notes"] = cleaned.split(":", 1)[1].strip() if ":" in cleaned else cleaned
+            continue
+
+        if stripped.startswith(("-", "*", "+", "•")):
+            if not current_slide:
+                current_slide = {"type": "content", "title": f"Slide {len(slides) + 1}", "bullet_points": []}
+            current_slide.setdefault("bullet_points", []).append(cleaned)
+            continue
+
+        if not current_slide:
+            current_slide = {"type": "content", "title": cleaned, "bullet_points": []}
+        elif current_slide.get("title", "").startswith("Slide "):
+            current_slide["title"] = cleaned
+        else:
+            current_slide.setdefault("bullet_points", []).append(cleaned)
+
+    if current_slide:
+        slides.append(current_slide)
+
+    if not slides:
+        raise ValueError("Khong tim thay slide nao trong outline")
+
+    for index, slide in enumerate(slides):
+        slide["type"] = _infer_slide_type(index, slide.get("title", ""), len(slides))
+        if slide["type"] == "title":
+            slide.pop("bullet_points", None)
+            slide.setdefault("subtitle", "Tong quan noi dung bai thuyet trinh")
+        elif not slide.get("bullet_points"):
+            slide["bullet_points"] = ["Noi dung se duoc bo sung trong buoc research"]
+
+    return {
+        "presentation_title": title if title != "Bai thuyet trinh" else slides[0].get("title", title),
+        "slides": slides,
+    }
+
+
+def normalize_outline_input(outline_input: str) -> dict:
+    """Chap nhan outline dang JSON hoac van ban/Markdown."""
+    try:
+        return validate_outline_json(outline_input)
+    except Exception:
+        return validate_outline_json(json.dumps(parse_outline_text(outline_input), ensure_ascii=False))
+
+
 def _slugify_filename(text: str, fallback: str = "presentation") -> str:
-    """Tạo tên file an toàn từ tiêu đề."""
+    """Tao ten file an toan tu tieu de."""
     cleaned = "".join(c if c.isalnum() or c in " -_" else "_" for c in text).strip()
     cleaned = re.sub(r"\s+", "_", cleaned)
     return (cleaned[:60] or fallback).strip("._")
 
 
 def _save_final_assets(topic: str, doc_content: str, slide_json: str, pptx_filepath: str) -> dict:
-    """Lưu doc và slide JSON để human chỉ làm việc với bộ sản phẩm cuối."""
+    """Luu doc va slide JSON de human chi lam viec voi bo san pham cuoi."""
     output_dir = os.path.dirname(pptx_filepath) if pptx_filepath else "output"
     os.makedirs(output_dir, exist_ok=True)
 
@@ -56,7 +155,7 @@ def _save_final_assets(topic: str, doc_content: str, slide_json: str, pptx_filep
 
 
 def _extract_json(text: str) -> str:
-    """Trích xuất JSON từ text có thể chứa markdown code blocks."""
+    """Trich xuat JSON tu text co the chua markdown code blocks."""
     pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
     matches = re.findall(pattern, text, re.DOTALL)
     if matches:
@@ -72,9 +171,10 @@ def _extract_json(text: str) -> str:
 
 
 def _is_approved(review_text: str) -> bool:
-    """Kiểm tra xem review kết luận là ĐẠT hay CẦN SỬA."""
+    """Kiem tra xem review ket luan la DAT hay CAN SUA."""
     text = review_text.upper()
-    # Tìm dòng có KẾT LUẬN
+
+    # Kiem tra pattern Unicode da bieu thuc (co dau)
     conclusion_patterns = [
         r"KẾT\s*LUẬN\s*:\s*ĐẠT",
         r"KẾT\s*LUẬN\s*:\s*CẦN\s*SỬA",
@@ -84,7 +184,6 @@ def _is_approved(review_text: str) -> bool:
         if match:
             return "ĐẠT" in match.group()
 
-    # Fallback: nếu có "ĐẠT" xuất hiện sau "KẾT LUẬN" hoặc ở cuối
     if "KẾT LUẬN" in text:
         idx = text.index("KẾT LUẬN")
         conclusion_part = text[idx:]
@@ -92,12 +191,24 @@ def _is_approved(review_text: str) -> bool:
             return True
         return False
 
-    # Nếu không tìm thấy KẾT LUẬN, mặc định là ĐẠT (tin tưởng agent)
-    return True
+    # Fallback: Kiem tra khong dau
+    text_no_accent = (
+        text.replace("Ế", "E").replace("Ậ", "A").replace("Ầ", "A").replace("Ử", "U")
+    )
+    if "KET LUAN" in text_no_accent:
+        idx = text_no_accent.index("KET LUAN")
+        conclusion_part = text_no_accent[idx:]
+        if "DAT" in conclusion_part and "CAN SUA" not in conclusion_part:
+            return True
+        return False
+
+    # WARNING: Khong tim thay ket luan ro rang -> mac dinh CAN SUA (an toan hon)
+    print("⚠️ WARNING: Khong tim thay 'KET LUAN' trong review text, mac dinh la CAN SUA")
+    return False
 
 
 def _extract_review_feedback(review_text: str) -> str:
-    """Trích xuất phần vấn đề + đề xuất từ review để dùng làm feedback cho lần revise."""
+    """Trich xuat phan van de + de xuat tu review de dung lam feedback cho lan revise."""
     lines = review_text.split("\n")
     feedback_lines = []
     capturing = False
@@ -113,45 +224,45 @@ def _extract_review_feedback(review_text: str) -> str:
 
 
 def validate_outline_json(json_str: str) -> dict:
-    """Validate và parse outline JSON. Trả về dict hoặc raise exception."""
+    """Validate va parse outline JSON. Tra ve dict hoac raise exception."""
     clean_json = _extract_json(json_str)
     outline = json.loads(clean_json)
 
     if "slides" not in outline:
-        raise ValueError("JSON thiếu trường 'slides'")
+        raise ValueError("JSON thieu truong 'slides'")
 
     if not isinstance(outline["slides"], list):
-        raise ValueError("'slides' phải là một list")
+        raise ValueError("'slides' phai la mot list")
 
     if len(outline["slides"]) == 0:
-        raise ValueError("'slides' không được rỗng")
+        raise ValueError("'slides' khong duoc rong")
 
     for i, slide in enumerate(outline["slides"]):
         if "type" not in slide:
-            raise ValueError(f"Slide {i} thiếu 'type'")
+            raise ValueError(f"Slide {i} thieu 'type'")
         if "title" not in slide:
-            raise ValueError(f"Slide {i} thiếu 'title'")
+            raise ValueError(f"Slide {i} thieu 'title'")
         if slide["type"] not in ["title", "content", "summary"]:
-            raise ValueError(f"Slide {i} có type không hợp lệ: {slide['type']}")
+            raise ValueError(f"Slide {i} co type khong hop le: {slide['type']}")
 
     return outline
 
 
 def format_outline_display(outline: dict) -> str:
-    """Format outline thành text dễ đọc để hiển thị cho người dùng."""
+    """Format outline thanh text de doc de hien thi cho nguoi dung."""
     lines = []
-    title = outline.get("presentation_title", "Không có tiêu đề")
-    lines.append(f"📋 Tiêu đề bài thuyết trình: {title}")
-    lines.append(f"📊 Tổng số slide: {len(outline.get('slides', []))}")
+    title = outline.get("presentation_title", "Khong co tieu de")
+    lines.append(f"📋 Tieu de bai thuyet trinh: {title}")
+    lines.append(f"📊 Tong so slide: {len(outline.get('slides', []))}")
     lines.append("")
 
     for i, slide in enumerate(outline.get("slides", [])):
         slide_type = slide.get("type", "content")
         emoji = {"title": "🎬", "content": "📄", "summary": "🏁"}.get(slide_type, "📄")
-        lines.append(f"{emoji} Slide {i+1} [{slide_type.upper()}]: {slide.get('title', 'Không có tiêu đề')}")
+        lines.append(f"{emoji} Slide {i+1} [{slide_type.upper()}]: {slide.get('title', 'Khong co tieu de')}")
 
         if slide.get("subtitle"):
-            lines.append(f"   Phụ đề: {slide['subtitle']}")
+            lines.append(f"   Phu de: {slide['subtitle']}")
 
         bullets = slide.get("bullet_points", [])
         if bullets:
@@ -171,37 +282,26 @@ def format_outline_display(outline: dict) -> str:
 
 
 # ============================================
-# Phase 1: Research & Outline (with auto-review)
+# Phase 1: Tao Outline (with auto-review)
 # ============================================
 
 def run_phase1(topic: str, provider: str = None, api_key: str = None, num_slides: int = 10,
                auto_review: bool = True) -> dict:
     """
-    Chạy Phase 1: Research → Tạo Outline → Auto-Review Outline.
-    Nếu reviewer yêu cầu sửa → tự động revise (max MAX_REVIEW_ITERATIONS lần).
-    Trả về dict với keys: research_result, outline_json, outline_display, review_logs, error
+    Chay Phase 1: Tao Outline tu topic -> Auto-Review Outline.
+    KHONG research truoc - chi tao outline.
+    Neu reviewer yeu cau sua -> tu dong revise (max MAX_REVIEW_ITERATIONS lan).
+    Tra ve dict voi keys: outline_json, outline_display, review_logs, error
     """
     review_logs = []
 
     try:
-        # Tạo agents
-        researcher = create_researcher(provider=provider, api_key=api_key)
+        # Tao agents
         strategist = create_content_strategist(provider=provider, api_key=api_key)
         outline_reviewer = create_outline_reviewer(provider=provider, api_key=api_key)
 
-        # Step 1: Research
-        research_task = create_research_task(researcher, topic)
-        crew = Crew(
-            agents=[researcher],
-            tasks=[research_task],
-            process=Process.sequential,
-            verbose=True,
-        )
-        result = crew.kickoff()
-        research_result = str(result)
-
-        # Step 2: Tạo outline từ kết quả research
-        content_task = create_content_task(strategist, research_result, topic, num_slides)
+        # Step 1: Tao outline tu topic
+        content_task = create_content_task(strategist, topic, num_slides)
         outline_crew = Crew(
             agents=[strategist],
             tasks=[content_task],
@@ -211,30 +311,28 @@ def run_phase1(topic: str, provider: str = None, api_key: str = None, num_slides
         outline_result = outline_crew.kickoff()
         outline_raw = str(outline_result)
 
-        # Parse và validate
+        # Parse va validate
         try:
             outline = validate_outline_json(outline_raw)
             outline_json = json.dumps(outline, ensure_ascii=False, indent=2)
         except (json.JSONDecodeError, ValueError) as e:
-            review_logs.append(f"⚠️ Lỗi parse JSON outline ban đầu: {e}")
+            review_logs.append(f"⚠️ Loi parse JSON outline ban dau: {e}")
             return {
-                "research_result": research_result,
                 "outline_json": outline_raw,
-                "outline_display": f"⚠️ Không thể parse JSON: {e}\n\n{outline_raw}",
+                "outline_display": f"⚠️ Khong the parse JSON: {e}\n\n{outline_raw}",
                 "outline_dict": None,
                 "review_logs": review_logs,
-                "error": f"Lỗi parse JSON: {e}",
+                "error": f"Loi parse JSON: {e}",
             }
 
-        # Step 3: Auto-review loop
+        # Step 2: Auto-review loop
         current_outline = outline_json
         if not auto_review:
-            review_logs.append("⏸️ Bỏ qua auto-review outline vì đang dùng human review mode")
+            review_logs.append("⏸️ Bo qua auto-review outline vi dang dung human review mode")
         else:
             for iteration in range(MAX_REVIEW_ITERATIONS):
-                review_logs.append(f"🔄 Review outline - lần {iteration + 1}")
+                review_logs.append(f"🔄 Review outline - lan {iteration + 1}")
 
-                # Review outline
                 review_task = create_outline_review_task(outline_reviewer, current_outline, topic)
                 review_crew = Crew(
                     agents=[outline_reviewer],
@@ -243,14 +341,13 @@ def run_phase1(topic: str, provider: str = None, api_key: str = None, num_slides
                     verbose=True,
                 )
                 review_result = str(review_crew.kickoff())
-                review_logs.append(f"📝 Kết quả review outline (lần {iteration + 1}):\n{review_result}")
+                review_logs.append(f"📝 Ket qua review outline (lan {iteration + 1}):\n{review_result}")
 
                 if _is_approved(review_result):
-                    review_logs.append(f"✅ Outline ĐẠT ở lần review {iteration + 1}")
+                    review_logs.append(f"✅ Outline DAT o lan review {iteration + 1}")
                     break
                 else:
-                    review_logs.append(f"⚠️ Outline CẦN SỬA ở lần review {iteration + 1}")
-                    # Extract feedback và revise
+                    review_logs.append(f"⚠️ Outline CAN SUA o lan review {iteration + 1}")
                     feedback = _extract_review_feedback(review_result)
                     revise_task = create_revise_content_task(strategist, current_outline, feedback, topic)
                     revise_crew = Crew(
@@ -262,23 +359,18 @@ def run_phase1(topic: str, provider: str = None, api_key: str = None, num_slides
                     revise_result = revise_crew.kickoff()
                     revised_raw = str(revise_result)
 
-                    # Parse revised outline
                     try:
                         outline = validate_outline_json(revised_raw)
                         current_outline = json.dumps(outline, ensure_ascii=False, indent=2)
-                        review_logs.append(f"✅ Đã sửa outline theo feedback (lần {iteration + 1})")
-                    except (json.JSONDecodeError, ValueError) as e:
-                        review_logs.append(f"⚠️ Lỗi parse revised outline: {e}, giữ nguyên outline cũ")
+                        review_logs.append(f"✅ Da sua outline theo feedback (lan {iteration + 1})")
+                    except (json.JSONDecodeError, ValueError):
+                        review_logs.append(f"⚠️ Loi parse revised outline JSON, giu nguyen outline cu")
             else:
-                review_logs.append(f"ℹ️ Đã hết số lần review tối đa ({MAX_REVIEW_ITERATIONS}), sử dụng outline hiện tại")
-
-        # Final parse
-        outline_display = format_outline_display(outline)
+                review_logs.append(f"ℹ️ Da het so lan review toi da ({MAX_REVIEW_ITERATIONS}), su dung outline hien tai")
 
         return {
-            "research_result": research_result,
             "outline_json": current_outline,
-            "outline_display": outline_display,
+            "outline_display": format_outline_display(outline),
             "outline_dict": outline,
             "review_logs": review_logs,
             "error": None,
@@ -286,118 +378,27 @@ def run_phase1(topic: str, provider: str = None, api_key: str = None, num_slides
 
     except Exception as e:
         return {
-            "research_result": None,
             "outline_json": None,
             "outline_display": None,
             "outline_dict": None,
             "review_logs": review_logs,
-            "error": f"Lỗi Phase 1: {e}",
+            "error": f"Loi Phase 1: {e}",
         }
 
 
-# ============================================
-# Phase 2: Document Generation (with auto-review)
-# ============================================
-
-def run_phase2_doc(approved_outline: str, topic: str, provider: str = None, api_key: str = None,
-                   auto_review: bool = True) -> dict:
+def use_user_outline(outline_json_str: str) -> dict:
     """
-    Chạy Phase 2: Tạo tài liệu chi tiết → Auto-Review → Auto-Revise nếu cần.
-    Trả về dict với keys: doc_content, review_logs, error
+    Su dung outline do nguoi dung cung cap.
+    Validate va tra ve dict giong run_phase1.
     """
     review_logs = []
-
     try:
-        doc_writer = create_doc_writer(provider=provider, api_key=api_key)
-        doc_reviewer = create_doc_reviewer(provider=provider, api_key=api_key)
-
-        # Step 1: Tạo tài liệu
-        doc_task = create_doc_task(doc_writer, approved_outline, topic)
-        crew = Crew(
-            agents=[doc_writer],
-            tasks=[doc_task],
-            process=Process.sequential,
-            verbose=True,
-        )
-        result = crew.kickoff()
-        current_doc = str(result)
-
-        # Step 2: Auto-review loop
-        if not auto_review:
-            review_logs.append("⏸️ Bỏ qua auto-review tài liệu vì đang dùng human review mode")
-        else:
-            for iteration in range(MAX_REVIEW_ITERATIONS):
-                review_logs.append(f"🔄 Review tài liệu - lần {iteration + 1}")
-
-                review_task = create_doc_review_task(doc_reviewer, current_doc, topic)
-                review_crew = Crew(
-                    agents=[doc_reviewer],
-                    tasks=[review_task],
-                    process=Process.sequential,
-                    verbose=True,
-                )
-                review_result = str(review_crew.kickoff())
-                review_logs.append(f"📝 Kết quả review tài liệu (lần {iteration + 1}):\n{review_result}")
-
-                if _is_approved(review_result):
-                    review_logs.append(f"✅ Tài liệu ĐẠT ở lần review {iteration + 1}")
-                    break
-                else:
-                    review_logs.append(f"⚠️ Tài liệu CẦN SỬA ở lần review {iteration + 1}")
-                    feedback = _extract_review_feedback(review_result)
-                    revise_task = create_revise_doc_task(doc_writer, current_doc, feedback, topic)
-                    revise_crew = Crew(
-                        agents=[doc_writer],
-                        tasks=[revise_task],
-                        process=Process.sequential,
-                        verbose=True,
-                    )
-                    revise_result = revise_crew.kickoff()
-                    current_doc = str(revise_result)
-                    review_logs.append(f"✅ Đã sửa tài liệu theo feedback (lần {iteration + 1})")
-            else:
-                review_logs.append(f"ℹ️ Đã hết số lần review tối đa ({MAX_REVIEW_ITERATIONS}), sử dụng tài liệu hiện tại")
+        outline = normalize_outline_input(outline_json_str)
+        current_outline = json.dumps(outline, ensure_ascii=False, indent=2)
+        review_logs.append("✅ Da cap nhat outline theo gop y cua nguoi dung")
 
         return {
-            "doc_content": current_doc,
-            "review_logs": review_logs,
-            "error": None,
-        }
-
-    except Exception as e:
-        return {
-            "doc_content": None,
-            "review_logs": review_logs,
-            "error": f"Lỗi Phase 2 (Doc): {e}",
-        }
-
-
-def revise_outline_with_human_feedback(current_outline: str, topic: str, feedback: str,
-                                       provider: str = None, api_key: str = None) -> dict:
-    """
-    Cho phép human review mode gửi góp ý để agent sửa outline trước khi sang Phase 2.
-    """
-    review_logs = []
-
-    try:
-        strategist = create_content_strategist(provider=provider, api_key=api_key)
-        revise_task = create_revise_content_task(strategist, current_outline, feedback, topic)
-        revise_crew = Crew(
-            agents=[strategist],
-            tasks=[revise_task],
-            process=Process.sequential,
-            verbose=True,
-        )
-        revise_result = revise_crew.kickoff()
-        revised_raw = str(revise_result)
-
-        outline = validate_outline_json(revised_raw)
-        outline_json = json.dumps(outline, ensure_ascii=False, indent=2)
-
-        review_logs.append("✅ Đã cập nhật outline theo góp ý của người dùng")
-
-        return {
-            "outline_json": outline_json,
+            "outline_json": current_outline,
             "outline_display": format_outline_display(outline),
             "outline_dict": outline,
             "review_logs": review_logs,
@@ -405,11 +406,110 @@ def revise_outline_with_human_feedback(current_outline: str, topic: str, feedbac
         }
     except Exception as e:
         return {
-            "outline_json": current_outline,
+            "outline_json": outline_json_str,
             "outline_display": None,
             "outline_dict": None,
             "review_logs": review_logs,
-            "error": f"Lỗi sửa outline theo góp ý: {e}",
+            "error": f"Loi validate user outline: {e}",
+        }
+
+
+# ============================================
+# Phase 2: Research + Viet Doc (with auto-review)
+# ============================================
+
+def run_phase2_doc(approved_outline: str, topic: str, provider: str = None,
+                   api_key: str = None, auto_review: bool = True) -> dict:
+    """
+    Chay Phase 2: Research (dựa trên outline) -> Viet Doc chi tiet -> Auto-Review Doc.
+    Doc danh cho nguoi thuyet trinh voi nguon tham khao ro rang.
+    """
+    review_logs = []
+
+    try:
+        # Tao agents
+        researcher = create_researcher(provider=provider, api_key=api_key)
+        writer = create_speaker_doc_writer(provider=provider, api_key=api_key)
+        doc_reviewer_agent = create_doc_reviewer(provider=provider, api_key=api_key)
+
+        # Step 1: Research chi tiet dua tren outline
+        review_logs.append("🔍 Bat dau nghien cuu chi tiet dua tren outline...")
+        research_task = create_research_task(researcher, topic, outline=approved_outline)
+        research_crew = Crew(
+            agents=[researcher],
+            tasks=[research_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        research_result = str(research_crew.kickoff())
+        review_logs.append("✅ Hoan thanh nghien cuu")
+
+        # Step 2: Viet doc chi tiet cho nguoi thuyet trinh
+        review_logs.append("✍️ Bat dau viet tai lieu chi tiet cho nguoi thuyet trinh...")
+        doc_task = create_doc_task(writer, approved_outline, research_result, topic)
+        doc_crew = Crew(
+            agents=[writer],
+            tasks=[doc_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        doc_result = doc_crew.kickoff()
+        current_doc = str(doc_result)
+        review_logs.append("✅ Hoan thanh viet tai lieu")
+
+        # Step 3: Auto-review doc loop
+        final_review_result = ""
+        if not auto_review:
+            review_logs.append("⏸️ Bo qua auto-review doc vi dang dung human review mode")
+        else:
+            for iteration in range(MAX_REVIEW_ITERATIONS):
+                review_logs.append(f"🔄 Review doc - lan {iteration + 1}")
+
+                review_task = create_doc_review_task(doc_reviewer_agent, current_doc, topic)
+                review_crew = Crew(
+                    agents=[doc_reviewer_agent],
+                    tasks=[review_task],
+                    process=Process.sequential,
+                    verbose=True,
+                )
+                review_result = str(review_crew.kickoff())
+                final_review_result = review_result
+                review_logs.append(f"📝 Ket qua review doc (lan {iteration + 1}):\n{review_result}")
+
+                if _is_approved(review_result):
+                    review_logs.append(f"✅ Doc DAT o lan review {iteration + 1}")
+                    break
+                else:
+                    review_logs.append(f"⚠️ Doc CAN SUA o lan review {iteration + 1}")
+                    feedback = _extract_review_feedback(review_result)
+                    revise_task = create_revise_doc_task(writer, current_doc, feedback, topic)
+                    revise_crew = Crew(
+                        agents=[writer],
+                        tasks=[revise_task],
+                        process=Process.sequential,
+                        verbose=True,
+                    )
+                    revise_result = revise_crew.kickoff()
+                    current_doc = str(revise_result)
+                    review_logs.append(f"✅ Da sua doc theo feedback (lan {iteration + 1})")
+            else:
+                review_logs.append(f"ℹ️ Da het so lan review toi da ({MAX_REVIEW_ITERATIONS}), su dung doc hien tai")
+
+        return {
+            "research_result": research_result,
+            "doc_content": current_doc,
+            "review_result": final_review_result,
+            "review_logs": review_logs,
+            "error": None,
+        }
+
+    except Exception as e:
+        return {
+            "research_result": None,
+            "doc_content": None,
+            "review_result": None,
+            "review_logs": review_logs,
+            "error": f"Loi Phase 2: {e}",
         }
 
 
@@ -420,8 +520,7 @@ def revise_outline_with_human_feedback(current_outline: str, topic: str, feedbac
 def run_phase3(approved_outline: str, approved_doc: str, theme_name: str, provider: str = None,
                api_key: str = None, auto_review: bool = True) -> dict:
     """
-    Chạy Phase 3: Slide Design → Auto-Review → Auto-Revise nếu cần → Generate PPTX.
-    Trả về dict với keys: slide_json, review_result, filepath, review_logs, error
+    Chay Phase 3: Slide Design -> Auto-Review -> Auto-Revise neu can -> Generate PPTX.
     """
     review_logs = []
 
@@ -447,15 +546,14 @@ def run_phase3(approved_outline: str, approved_doc: str, theme_name: str, provid
         except (json.JSONDecodeError, ValueError):
             current_slide_json = approved_outline
             slide_data = json.loads(approved_outline)
-            review_logs.append("⚠️ Không parse được slide JSON từ designer, dùng outline gốc")
+            review_logs.append("⚠️ Khong parse duoc slide JSON tu designer, dung outline goc")
 
         final_review_result = ""
         if not auto_review:
-            review_logs.append("⏸️ Bỏ qua auto-review slide vì đang dùng human review mode")
+            review_logs.append("⏸️ Bo qua auto-review slide vi dang dung human review mode")
         else:
-            # Step 2: Auto-review loop
             for iteration in range(MAX_REVIEW_ITERATIONS):
-                review_logs.append(f"🔄 Review slide - lần {iteration + 1}")
+                review_logs.append(f"🔄 Review slide - lan {iteration + 1}")
 
                 review_task = create_review_task(slide_reviewer, current_slide_json)
                 review_crew = Crew(
@@ -466,23 +564,22 @@ def run_phase3(approved_outline: str, approved_doc: str, theme_name: str, provid
                 )
                 review_result = str(review_crew.kickoff())
                 final_review_result = review_result
-                review_logs.append(f"📝 Kết quả review slide (lần {iteration + 1}):\n{review_result}")
+                review_logs.append(f"📝 Ket qua review slide (lan {iteration + 1}):\n{review_result}")
 
                 if _is_approved(review_result):
-                    review_logs.append(f"✅ Slide ĐẠT ở lần review {iteration + 1}")
+                    review_logs.append(f"✅ Slide DAT o lan review {iteration + 1}")
                     break
                 else:
-                    review_logs.append(f"⚠️ Slide CẦN SỬA ở lần review {iteration + 1}")
-                    # Re-design slide with review feedback
+                    review_logs.append(f"⚠️ Slide CAN SUA o lan review {iteration + 1}")
                     feedback = _extract_review_feedback(review_result)
                     revise_task = create_slide_task(
                         designer, approved_outline, theme_name,
                         doc_content=approved_doc,
                         additional_instructions=f"""
-                        LƯU Ý: Slide trước đó đã bị review yêu cầu sửa. Hãy cải thiện theo feedback sau:
+                        LUU Y: Slide truoc do da bi review yeu cau sua. Hay cai thien theo feedback sau:
                         {feedback}
-                        
-                        Hãy đảm bảo output JSON được cải thiện theo các điểm trên.
+
+                        Hay dam bao output JSON duoc cai thien theo cac diem tren.
                         """,
                     )
                     revise_crew = Crew(
@@ -497,11 +594,11 @@ def run_phase3(approved_outline: str, approved_doc: str, theme_name: str, provid
                     try:
                         slide_data = validate_outline_json(revised_raw)
                         current_slide_json = json.dumps(slide_data, ensure_ascii=False, indent=2)
-                        review_logs.append(f"✅ Đã sửa slide theo feedback (lần {iteration + 1})")
+                        review_logs.append(f"✅ Da sua slide theo feedback (lan {iteration + 1})")
                     except (json.JSONDecodeError, ValueError):
-                        review_logs.append(f"⚠️ Lỗi parse revised slide JSON, giữ nguyên slide cũ")
+                        review_logs.append(f"⚠️ Loi parse revised slide JSON, giu nguyen slide cu")
             else:
-                review_logs.append(f"ℹ️ Đã hết số lần review tối đa ({MAX_REVIEW_ITERATIONS}), sử dụng slide hiện tại")
+                review_logs.append(f"ℹ️ Da het so lan review toi da ({MAX_REVIEW_ITERATIONS}), su dung slide hien tai")
 
         # Generate PPTX
         generator = PPTXGenerator()
@@ -521,34 +618,84 @@ def run_phase3(approved_outline: str, approved_doc: str, theme_name: str, provid
             "review_result": None,
             "filepath": None,
             "review_logs": review_logs,
-            "error": f"Lỗi Phase 3: {e}",
+            "error": f"Loi Phase 3: {e}",
         }
 
 
 # ============================================
-# Full Pipeline: Chạy toàn bộ tự động
+# revise_outline_with_human_feedback
+# ============================================
+
+def revise_outline_with_human_feedback(current_outline: str, feedback: str, topic: str,
+                                        provider: str = None, api_key: str = None) -> dict:
+    """Chinh sua outline dua tren gop y cua nguoi dung."""
+    review_logs = []
+
+    try:
+        strategist = create_content_strategist(provider=provider, api_key=api_key)
+
+        revise_task = create_revise_content_task(strategist, current_outline, feedback, topic)
+        revise_crew = Crew(
+            agents=[strategist],
+            tasks=[revise_task],
+            process=Process.sequential,
+            verbose=True,
+        )
+        result = revise_crew.kickoff()
+        outline_raw = str(result)
+
+        outline = validate_outline_json(outline_raw)
+        outline_json = json.dumps(outline, ensure_ascii=False, indent=2)
+        review_logs.append("✅ Da cap nhat outline theo gop y cua nguoi dung")
+
+        return {
+            "outline_json": outline_json,
+            "outline_display": format_outline_display(outline),
+            "outline_dict": outline,
+            "review_logs": review_logs,
+            "error": None,
+        }
+    except Exception as e:
+        return {
+            "outline_json": current_outline,
+            "outline_display": None,
+            "outline_dict": None,
+            "review_logs": review_logs,
+            "error": f"Loi sua outline theo gop y: {e}",
+        }
+
+
+# ============================================
+# Full Pipeline: Chay toan bo tu dong
 # ============================================
 
 def run_full_pipeline(topic: str, theme_name: str = "corporate", num_slides: int = 10,
-                      provider: str = None, api_key: str = None, auto_review: bool = True) -> dict:
+                      provider: str = None, api_key: str = None, auto_review: bool = True,
+                      user_outline: str = None) -> dict:
     """
-    Chạy toàn bộ pipeline tự động: Research → Outline → Doc → Slide → PPTX.
-    Mỗi phase có auto-review loop riêng.
-    Trả về dict với tất cả kết quả và review_logs.
+    Chay toan bo pipeline tu dong.
+    Neu co user_outline -> skip Phase 1, dung outline san.
+    Nguoc lai -> Tao outline tu topic.
+    Research -> Viet Doc -> Slide -> PPTX.
     """
     all_review_logs = []
     all_errors = []
 
-    # Phase 1: Research + Outline
-    phase1 = run_phase1(
-        topic=topic, provider=provider, api_key=api_key, num_slides=num_slides, auto_review=auto_review,
-    )
+    # Phase 1: Tao Outline hoac dung user outline
+    if user_outline:
+        phase1 = use_user_outline(user_outline)
+        all_review_logs.append("📋 Su dung outline do nguoi dung cung cap")
+    else:
+        phase1 = run_phase1(
+            topic=topic, provider=provider, api_key=api_key,
+            num_slides=num_slides, auto_review=auto_review,
+        )
     all_review_logs.extend(phase1.get("review_logs", []))
 
     if phase1["error"]:
         all_errors.append(phase1["error"])
         return {
-            "phase": "research",
+            "phase": "outline",
             "outline_json": None,
             "outline_display": None,
             "doc_content": None,
@@ -559,7 +706,7 @@ def run_full_pipeline(topic: str, theme_name: str = "corporate", num_slides: int
             "errors": all_errors,
         }
 
-    # Phase 2: Doc
+    # Phase 2: Research + Viet Doc
     phase2 = run_phase2_doc(
         approved_outline=phase1["outline_json"],
         topic=topic, provider=provider, api_key=api_key, auto_review=auto_review,
